@@ -20,6 +20,9 @@ import { $el } from "/scripts/ui.js";
  * 4. Keep the p5 sketch source serializable in exported workflow JSON. Avoid
  *    node-wide widget serialization suppression; mark only decorative/helper
  *    widgets as non-serializable so the script survives export/import.
+ *    A node.onSerialize hook also injects the live CodeMirror source into
+ *    workflow JSON because ComfyUI workflow export may read DOM widget .value
+ *    fields directly instead of calling serializeValue().
  *
  * Important history:
  * - p5.js 2.x no longer behaved like the older global-mode injection this node
@@ -31,8 +34,8 @@ import { $el } from "/scripts/ui.js";
  * - p5.js can create a default 100x100 canvas before the user sketch runs.
  *   The iframe removes pre-existing canvases and waits for setup()/draw()
  *   readiness before capture, preventing accidental black default images.
- * - The old date-suffixed filenames were only cache-busting during debugging.
- *   The stable extension filename is web/js/p5jsimage.js.
+ * - Date-suffixed filenames are used only when a RunComfy cache-bust is
+ *   required. The intended stable extension filename is web/js/p5jsimage.js.
  */
 
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
@@ -361,6 +364,29 @@ function savePaneHeights(node) {
 }
 
 /**
+ * Store the current sketch source in node.properties as an export/import backup.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @param {string} script Current p5 sketch source.
+ */
+function saveScriptProperty(node, script) {
+  node.properties ||= {};
+  node.properties.p5jsScript = script;
+}
+
+/**
+ * Read the best available saved script from node properties.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @returns {string | undefined} Saved script source, if any.
+ */
+function getSavedScriptProperty(node) {
+  return typeof node.properties?.p5jsScript === "string"
+    ? node.properties.p5jsScript
+    : undefined;
+}
+
+/**
  * Ask ComfyUI to recompute DOM widget layout after pane height changes.
  *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
@@ -661,6 +687,17 @@ function getInputDefault(inputData, fallback = "") {
 }
 
 /**
+ * Return the index of a named widget in node.widgets.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @param {string} name Widget name to find.
+ * @returns {number} Widget index, or -1 when absent.
+ */
+function getWidgetIndex(node, name) {
+  return node.widgets?.findIndex((w) => w.name === name) ?? -1;
+}
+
+/**
  * Find the script editor widget on a node.
  *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
@@ -681,10 +718,55 @@ function getScriptWidget(node) {
  */
 function getScriptValue(node) {
   const widget = getScriptWidget(node);
-  if (!widget) return DEFAULT_SKETCH;
-  if (widget._p5jsGetValue) return widget._p5jsGetValue();
-  if (widget._cmEditor) return widget._cmEditor.state.doc.toString();
-  return widget.value ?? DEFAULT_SKETCH;
+  let script = DEFAULT_SKETCH;
+  if (widget?._p5jsGetValue) {
+    script = widget._p5jsGetValue();
+  } else if (widget?._cmEditor) {
+    script = widget._cmEditor.state.doc.toString();
+  } else if (widget?.value != null) {
+    script = widget.value;
+  }
+  saveScriptProperty(node, script);
+  return script;
+}
+
+/**
+ * Install a final workflow-serialization hook for this node.
+ *
+ * Prompt execution uses widget.serializeValue(), but workflow export may simply
+ * copy widget.value into widgets_values. This hook runs during node serialization
+ * and force-writes the live CodeMirror text into widgets_values,
+ * widgets_values_named, and node.properties.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ */
+function installWorkflowSerialization(node) {
+  if (node._p5jsWorkflowSerializationInstalled) return;
+
+  const previousOnSerialize = node.onSerialize?.bind(node);
+  node.onSerialize = function (serialized) {
+    previousOnSerialize?.(serialized);
+
+    const script = getScriptValue(node);
+    const paneHeights = { ...getPaneHeights(node) };
+    saveScriptProperty(node, script);
+    savePaneHeights(node);
+
+    serialized.properties ||= {};
+    serialized.properties.p5jsScript = script;
+    serialized.properties.p5jsPaneHeights = paneHeights;
+
+    serialized.widgets_values_named ||= {};
+    serialized.widgets_values_named.script = script;
+
+    const scriptIndex = getWidgetIndex(node, "script");
+    if (scriptIndex >= 0) {
+      serialized.widgets_values ||= [];
+      serialized.widgets_values[scriptIndex] = script;
+    }
+  };
+
+  node._p5jsWorkflowSerializationInstalled = true;
 }
 
 /**
@@ -730,6 +812,9 @@ async function mountCodeMirror(widget, container, initialValue) {
           // Push the new text back into the widget, which keeps ComfyUI's
           // prompt serialization in sync.
           widget.value = editor.state.doc.toString();
+          if (widget._p5jsNode) {
+            saveScriptProperty(widget._p5jsNode, widget.value);
+          }
         }
       }),
     ],
@@ -760,6 +845,9 @@ async function mountCodeMirror(widget, container, initialValue) {
   widget._cmEditor = editor;
   widget._p5jsGetValue = () => editor.state.doc.toString();
   widget.serializeValue = widget._p5jsGetValue;
+  if (widget._p5jsNode) {
+    saveScriptProperty(widget._p5jsNode, widget._p5jsGetValue());
+  }
 }
 
 /**
@@ -861,7 +949,9 @@ app.registerExtension({
        */
       P5JS_SCRIPT(node, inputName, inputData) {
         getPaneHeights(node);
-        const initialValue = getInputDefault(inputData, DEFAULT_SKETCH);
+        const initialValue =
+          getSavedScriptProperty(node) ||
+          getInputDefault(inputData, DEFAULT_SKETCH);
         const container = $el("div", {
           style: {
             display: "flex",
@@ -949,6 +1039,8 @@ app.registerExtension({
           },
         );
         widget.value = initialValue;
+        widget._p5jsNode = node;
+        widget.serialize = true;
         widget._p5jsCustomScript = true;
         widget._p5jsGetValue = () => widget.value ?? "";
         widget.serializeValue = () => getScriptValue(node);
@@ -1085,6 +1177,7 @@ app.registerExtension({
     // exported workflows to lose the p5 code. Keep node-wide serialization on
     // and opt individual helper widgets out with widget.serialize = false.
     node.serialize_widgets = true;
+    installWorkflowSerialization(node);
 
     // Older saved workflows may still have a native STRING widget for script.
     // New nodes use the custom P5JS_SCRIPT widget above.
