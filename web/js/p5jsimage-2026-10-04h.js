@@ -5,6 +5,7 @@ import { $el } from "/scripts/ui.js";
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
 const P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
 let canvasCaptureRequestId = 0;
+const SPLITTER_HEIGHT = 4;
 const PANE_MIN_HEIGHTS = {
   script: 120,
   preview: 160,
@@ -263,7 +264,9 @@ function createPaneSplitter(node, upperPane, lowerPane) {
   const splitter = $el("div", {
     title: "Drag to resize panes",
     style: {
-      height: "10px",
+      height: `${SPLITTER_HEIGHT}px`,
+      minHeight: `${SPLITTER_HEIGHT}px`,
+      maxHeight: `${SPLITTER_HEIGHT}px`,
       width: "100%",
       boxSizing: "border-box",
       cursor: "row-resize",
@@ -275,6 +278,14 @@ function createPaneSplitter(node, upperPane, lowerPane) {
       justifyContent: "center",
     },
   });
+  splitter.style.setProperty(
+    "--comfy-widget-min-height",
+    `${SPLITTER_HEIGHT}px`,
+  );
+  splitter.style.setProperty(
+    "--comfy-widget-height",
+    `${SPLITTER_HEIGHT}px`,
+  );
 
   const grip = $el("div", {
     style: {
@@ -342,7 +353,9 @@ function addPaneSplitterWidget(node, name, upperPane, lowerPane) {
   const splitter = createPaneSplitter(node, upperPane, lowerPane);
   const widget = node.addDOMWidget(name, "P5JS Splitter", splitter, {
     hideOnZoom: false,
-    getMinHeight: () => 10,
+    getMinHeight: () => SPLITTER_HEIGHT,
+    getMaxHeight: () => SPLITTER_HEIGHT,
+    getHeight: () => SPLITTER_HEIGHT,
   });
   widget.serializeValue = () => undefined;
   return widget;
