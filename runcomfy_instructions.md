@@ -63,6 +63,7 @@ The recommended installation path is to use RunComfy's command-line terminal.
 
 1. Open the **Terminal** panel in RunComfy. There is a button for this on the right side of the RunComfy interface. 
 2. Change directory to the ComfyUI custom nodes folder:<br/>`cd custom_nodes`
+  * In the unlikely event you need to delete a previous installation, use: `rm -rf comfyui-p5js-node`. 
 3. Clone this repository:<br />`git clone https://github.com/golanlevin/comfyui-p5js-node.git`
 4. Verify that the node is present by listing the directory's contents: `ls`. You should see it listed among the other custom nodes:<br/>![runcomfy_terminal](examples/screenshots/runcomfy_terminal.png)
 5. Click **Restart Comfy**. It will take about 30 seconds for the machine to reconnect.
@@ -70,24 +71,6 @@ The recommended installation path is to use RunComfy's command-line terminal.
 6. In the Assets browser, confirm that `Home > ComfyUI > custom_nodes > comfyui-p5js-node` exists.
 7. In the ComfyUI graph, right-click and add the `p5js image` node.
 
-<!-- 
-
-rm -rf comfyui-p5js-node
-
--->
-
-If you are testing a branch (*this is not common*):
-
-```sh
-cd custom_nodes
-git clone https://github.com/golanlevin/comfyui-p5js-node.git
-cd comfyui-p5js-node
-git checkout BRANCH_NAME
-```
-
-
-
-RunComfy also supports uploading a prepared custom node folder into `ComfyUI/custom_nodes` through its file browser.
 
 ## Minimal Node Test
 
@@ -101,10 +84,8 @@ function setup() {
 function draw() {
   background("AntiqueWhite");
   noStroke();
-
   fill("LightSlateGray");
   rect(0, 0, width, 220);
-
   fill(70, 40, 10);
   ellipse(220, 430, 200, 80);
   fill(90, 60, 15);

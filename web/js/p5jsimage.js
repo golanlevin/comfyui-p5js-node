@@ -355,39 +355,6 @@ function getPaneHeights(node) {
 }
 
 /**
- * Read one pane height, clamped to its minimum.
- *
- * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
- * @param {"script" | "preview" | "console"} pane Pane name.
- * @returns {number} Current pane height.
- */
-function getPaneHeight(node, pane) {
-  return Math.max(PANE_MIN_HEIGHTS[pane], getPaneHeights(node)[pane]);
-}
-
-/**
- * Restore saved pane heights from node properties into the live widget state.
- *
- * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
- * @returns {boolean} True when saved pane heights were applied.
- */
-function restorePaneHeights(node) {
-  const savedHeights = node.properties?.p5jsPaneHeights;
-  if (!savedHeights || typeof savedHeights !== "object") return false;
-
-  const heights = getPaneHeights(node);
-  for (const pane of Object.keys(DEFAULT_PANE_HEIGHTS)) {
-    const value = Number(savedHeights[pane]);
-    if (Number.isFinite(value)) {
-      heights[pane] = Math.max(PANE_MIN_HEIGHTS[pane], value);
-    }
-  }
-  savePaneHeights(node);
-  refreshNodeLayout(node);
-  return true;
-}
-
-/**
  * Persist pane heights onto node.properties so workflows can remember them.
  *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
@@ -447,19 +414,11 @@ function getSerializedScript(node) {
 /**
  * Ask ComfyUI to recompute DOM widget layout after pane height changes.
  *
- * The pane DOM widgets report min/max/preferred heights from getPaneHeight().
- * Calling computeSize()/setSize() makes imported workflows snap back to those
- * saved splitter positions instead of stretching rows from the imported node
- * size.
- *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
  */
 function refreshNodeLayout(node) {
   if (node.setSize && node.size) {
-    const computedSize = node.computeSize?.();
-    const width = Math.max(node.size[0], computedSize?.[0] || 0);
-    const height = computedSize?.[1] || node.size[1];
-    node.setSize([width, height]);
+    node.setSize([node.size[0], node.size[1]]);
   }
   app.graph?.setDirtyCanvas?.(true, true);
 }
@@ -884,8 +843,6 @@ function restoreScriptAfterWorkflowLoad(node) {
   let attempts = 0;
 
   function attemptRestore() {
-    restorePaneHeights(node);
-
     const script = getSerializedScript(node);
     if (script) {
       setScriptValue(node, script);
@@ -1170,9 +1127,7 @@ app.registerExtension({
           container,
           {
             hideOnZoom: false,
-            getMinHeight: () => getPaneHeight(node, "script"),
-            getMaxHeight: () => getPaneHeight(node, "script"),
-            getHeight: () => getPaneHeight(node, "script"),
+            getMinHeight: () => getPaneHeights(node).script,
           },
         );
         widget.value = initialValue;
@@ -1265,9 +1220,7 @@ app.registerExtension({
         // which is automatically positioned/scaled by ComfyUI as the canvas pans and zooms.
         const widget = node.addDOMWidget("image", "P5JS", iframe, {
           hideOnZoom: false,
-          getMinHeight: () => getPaneHeight(node, "preview"),
-          getMaxHeight: () => getPaneHeight(node, "preview"),
-          getHeight: () => getPaneHeight(node, "preview"),
+          getMinHeight: () => getPaneHeights(node).preview,
         });
         widget.sketchfile = sketchfile;
         widget.consolePane = consolePane;
@@ -1288,9 +1241,7 @@ app.registerExtension({
           consolePane,
           {
             hideOnZoom: false,
-            getMinHeight: () => getPaneHeight(node, "console"),
-            getMaxHeight: () => getPaneHeight(node, "console"),
-            getHeight: () => getPaneHeight(node, "console"),
+            getMinHeight: () => getPaneHeights(node).console,
           },
         );
         consoleWidget.serialize = false;
