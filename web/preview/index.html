@@ -20,23 +20,80 @@
   <body>
     <script type="text/javascript">
       (function () {
-        //get the sketch file name
-        var queryString = window.location.search;
-        var urlParams = new URLSearchParams(queryString);
+        function showError(message, error) {
+          console.error("[p5js preview]", message, error || "");
+          document.body.textContent = message;
+          document.body.style.cssText =
+            "margin: 0; padding: 12px; box-sizing: border-box;" +
+            "background: #221b1b; color: #ffd7d7;" +
+            "font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;" +
+            "white-space: pre-wrap;";
+        }
+
+        function startP5Sketch() {
+          if (!window.p5) {
+            showError("p5.js did not load.");
+            return;
+          }
+          if (document.querySelector("canvas")) return;
+
+          try {
+            new window.p5();
+          } catch (error) {
+            showError(error && error.stack ? error.stack : String(error), error);
+          }
+        }
+
+        window.addEventListener("error", function (event) {
+          showError(event.message || "Error while running p5.js sketch.", event.error);
+        });
+
+        window.addEventListener("unhandledrejection", function (event) {
+          showError(
+            event.reason && event.reason.stack
+              ? event.reason.stack
+              : String(event.reason || "Unhandled promise rejection."),
+            event.reason,
+          );
+        });
+
+        var urlParams = new URLSearchParams(window.location.search);
         var sketchName = urlParams.get("sketch");
 
         if (sketchName) {
-          var script_tag = document.createElement("script");
-          script_tag.type = "text/javascript";
-          script_tag.async = true;
-          script_tag.src =
+          var sketchUrl =
             "/view?filename=" +
             sketchName +
             "&type=temp&subfolder=p5js&rand=" +
             Math.random() +
             Date.now();
-          var s = document.getElementsByTagName("script")[0];
-          s.parentNode.insertBefore(script_tag, s);
+
+          fetch(sketchUrl, { cache: "no-store" })
+            .then(function (response) {
+              if (!response.ok) {
+                throw new Error(
+                  "Could not load sketch file: " +
+                    sketchName +
+                    " (" +
+                    response.status +
+                    " " +
+                    response.statusText +
+                    ")",
+                );
+              }
+              return response.text();
+            })
+            .then(function (source) {
+              var script_tag = document.createElement("script");
+              script_tag.type = "text/javascript";
+              script_tag.text =
+                source + "\n//# sourceURL=/p5js/" + sketchName + "\n";
+              document.body.appendChild(script_tag);
+              setTimeout(startP5Sketch, 0);
+            })
+            .catch(function (error) {
+              showError(error && error.stack ? error.stack : String(error), error);
+            });
         }
       })();
     </script>

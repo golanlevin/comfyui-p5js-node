@@ -92,7 +92,7 @@ To use this feature you need BOTH: (1) 'allow_git_url_install = true' in config.
 
 -->
 
-RunComfy also supports uploading a prepared custom node folder into `custom_nodes` through its file browser.
+RunComfy also supports uploading a prepared custom node folder into `ComfyUI/custom_nodes` through its file browser.
 
 ## Minimal Node Test
 

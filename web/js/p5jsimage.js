@@ -25,16 +25,21 @@ async function saveSketch(filename, srcCode) {
 
     return resp;
   } catch (e) {
-    console.log(`Error sending sketch file for saving: ${e}`);
+    console.error("Error sending sketch file for saving:", e);
+    throw e;
   }
 } //end saveSketch
+
+function findP5Canvas(doc) {
+  return doc?.getElementById("defaultCanvas0") || doc?.querySelector("canvas");
+}
 
 // Poll the iframe document until p5.js has created its canvas, or time out.
 async function waitForCanvas(iframe, timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    const canvas = doc && doc.getElementById("defaultCanvas0");
+    const canvas = findP5Canvas(doc);
     if (canvas && canvas.width > 0 && canvas.height > 0) {
       // Give draw() a moment to render its first frame before we read pixels.
       await new Promise((r) => setTimeout(r, 200));
@@ -267,7 +272,15 @@ app.registerExtension({
           "Run Sketch",
           "run_p5js_sketch",
           () => {
-            runSketch(iframe, sketchfile, node.widgets[0].value);
+            runSketch(iframe, sketchfile, node.widgets[0].value).then((canvas) => {
+              if (!canvas) {
+                alert("p5.js sketch did not produce a canvas");
+              }
+            }).catch((e) => {
+              const err = `Error running p5.js sketch: ${e.message || e}`;
+              alert(err);
+              console.error(err, e);
+            });
           }
         );
         btn.serializeValue = () => undefined;
@@ -305,7 +318,7 @@ app.registerExtension({
       const theFrame = p5jsWidget.element;
       const iframe_doc =
         theFrame.contentDocument || theFrame.contentWindow.document;
-      let canvas = iframe_doc.getElementById("defaultCanvas0"); //TODO: maybe change this to pull all canvas elements and return the first one created
+      let canvas = findP5Canvas(iframe_doc);
 
       // If the sketch has never been run (no canvas yet), run it now so the
       // workflow still works without the user clicking "Run Sketch" first.
