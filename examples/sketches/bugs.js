@@ -1,3 +1,6 @@
+// Use with the caption: 
+// still life of large rhinoceros horned beetle insects on a table
+
 function setup() {
   createCanvas(512, 512);
   noLoop();

@@ -1,14 +1,8 @@
 # comfyui-p5js-node
 
-Custom ComfyUI node for running a p5.js sketch and passing its canvas pixels into a ComfyUI image workflow.
+![landscape](examples/workflows/p5-in-comfy-workflow-bugs.png)
 
-This version loads core p5.js 2.3.4:
-
-```html
-https://cdn.jsdelivr.net/npm/p5@2.3.4/lib/p5.js
-```
-
-*Note: this node does not load `p5.sound`. Sketches that use sound APIs are not supported by default.*
+> This is a custom ComfyUI node for running a p5.js sketch and passing its canvas pixels into a ComfyUI image workflow. This project was conceived in 2024 by [Benjamin Fox](https://github.com/tracerstar) (@tracerstar) and [initially published here](https://github.com/tracerstar/comfyui-p5js-node/). My repo includes [improvements](https://github.com/dominikus/comfyui-p5js-node) made by [Dominikus Baur](https://github.com/dominikus) (@ dominikus), as well as  significant changes for late 2026, including updates to target **ComfyUI 0.36.0** and **p5.js v.2.3.4**. 
 
 ## What This Is
 
@@ -93,12 +87,12 @@ git clone https://github.com/YOUR_ACCOUNT/comfyui-p5js-node.git
 
 Then restart ComfyUI.
 
-## For RunComfy.com
+## Instructions For RunComfy.com
 
-For RunComfy-specific classroom/cloud instructions, see [runcomfy_instructions.md](runcomfy_instructions.md).
+For RunComfy-specific classroom/cloud instructions, see [**runcomfy_instructions.md**](runcomfy_instructions.md).
 
 ## Notes for Maintainers
 
-The preview iframe lives in `web/preview/index.html`. The ComfyUI frontend extension lives in `web/js/p5jsimage-2026-10-04-codefix.js`. The Python node wrapper lives in `p5jsimage.py`.
+The preview iframe lives in `web/preview/index.html`. The ComfyUI frontend extension lives in `web/js/p5jsimage.js`. The Python node wrapper lives in `p5jsimage.py`.
 
 The iframe uses ComfyUI's `addDOMWidget` API so the preview remains attached to the node while panning and zooming. The script editor is upgraded to CodeMirror and stops pointer events from bubbling into ComfyUI's canvas so editing code does not start a node drag.

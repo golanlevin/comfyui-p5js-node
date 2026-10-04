@@ -1,6 +1,6 @@
 # `comfyui-p5js-node` on RunComfy
 
-> This page presents instructions for using the `comfyui-p5js-node` in a cloud-based ComfyUI environment at RunComfy.com. RunComfy allows quick access to hundreds of different ComfyUI nodes, without the hassle and cost of installing and maintaining a dedicated machine. *These instructions are current as of October 2026.*
+> This page presents instructions for using the `comfyui-p5js-node` in a cloud-based ComfyUI environment at RunComfy.com. RunComfy allows quick access to hundreds of different ComfyUI nodes, without the hassle and cost of installing and maintaining a dedicated machine. *These instructions are current as of October 4, 2026.*
 > 
 > These notes are written for classroom use: students can run ComfyUI in the cloud, install this custom node, paste in a p5.js sketch, and use the sketch image to condition a Stable Diffusion workflow.
 
@@ -98,43 +98,82 @@ Check that:
 1. **Run Sketch** shows the p5 canvas in the iframe.
 2. Panning and zooming the ComfyUI canvas keeps the iframe aligned with the node.
 3. Clicking and typing in the code editor does not drag the node.
-4. **Queue Prompt** captures the p5 canvas and passes it to the next image node.
+4. ComfyUI's **Run** button captures the p5 canvas and passes it to the next image node.
 5. A workflow with two p5 nodes captures two separate sketches correctly.
 
-## Example Image-Conditioning Workflow
 
-Start from RunComfy's default SD 1.5 workflow, then modify it so the p5 image becomes the image input to the diffusion graph.
+---
 
-This repository also includes example assets in [examples/](examples/). Start with `examples/workflows/p5-in-comfy-sd15-basic.json` and the sketches in `examples/sketches/`.
 
-Typical nodes to add or connect:
+## Example p5 Sketches + ComfyUI Workflows 
 
-1. `p5js image`
-2. `VAE Encode`
-3. `Preview Image`
-4. `Save Image`
+I recommend developing and debugging sketches first in a dedicated p5.js editor such as the p5.js Web Editor, OpenProcessing, or a local editor. The ComfyUI node is best treated as the place where an already-working sketch is run inside an image-generation workflow.
 
-A common pattern is:
+### Example 1: Bugs
 
-```text
-p5js image -> VAE Encode -> KSampler latent image input
-p5js image -> Preview Image
-KSampler -> VAE Decode -> Save Image
-```
+![landscape](examples/screenshots/bugs.png)
 
-For a first text prompt, try:
+This repository includes example p5+Comfy workflows in [examples/](examples/), such as the following beetle example. Either the JSON or the PNG can be dragged into the RunComfy.com window to load the workflow: 
+* [p5-in-comfy-workflow-bugs.json](examples/workflows/p5-in-comfy-workflow-bugs.json) — Workflow JSON
+* [p5-in-comfy-workflow-bugs.png](examples/workflows/p5-in-comfy-workflow-bugs.png) — Workflow image
 
-```text
-Rolling hills, foggy day, cloudy sky, mountains with trees
-```
 
-The exact node names and wiring may vary with RunComfy's current default workflow, but the key idea is that the p5 node outputs an `IMAGE`, and `VAE Encode` converts that image into the latent representation used by the sampler.
+![p5-in-comfy-workflow-bugs](examples/workflows/p5-in-comfy-workflow-bugs.png)
 
-## Classroom Landscape Sketch
+This p5 sketch is suitable for a first conditioning test. Try experimenting with the "Denoise" value in the KSampler — values between 0.5 and 1.0 should produce results that adhere more or less closely to the p5 canvas. 
 
-This visual-only p5 sketch is suitable for a first conditioning test:
 
 ```js
+// Put this caption in the CLIP Text Encode Prompt:
+// still life of large rhinoceros horned beetle insects on a table
+
+function setup() {
+  createCanvas(512, 512);
+  noLoop();
+}
+
+function draw() {
+  background('LightSlateGray'); 
+  noStroke(); 
+  fill('AntiqueWhite'); 
+  ellipse(250,400,1200,350); 
+  
+  // Let's draw some "bugs". 
+  for (let i=0; i<2; i++){
+    let rr = random(60,90); 
+    let rg = random(30,65); 
+    let rb = random(10,45); 
+    fill(rr,rg,rb); 
+    let bx = width * ((i+1)/3) + random(-25,25);
+    let by = height * random(0.65, 0.80); 
+    let diam = random(100,150); 
+    ellipse(bx,by, diam, diam*0.6); 
+  }
+}
+
+function keyPressed() {
+  if (key === " ") {
+    draw(); 
+  }
+}
+```
+
+### Example 2: Foggy Landscape
+
+This example includes an AI-based image *upscaler* which increases the resolution of the generated image.
+
+![landscape](examples/screenshots/landscape.png)
+
+* [p5-in-comfy-workflow-landscape.json](examples/workflows/p5-in-comfy-workflow-landscape.json)  — Workflow JSON* [p5-in-comfy-workflow-landscape.png](examples/workflows/p5-in-comfy-workflow-landscape.png) – Workflow image
+
+![p5-in-comfy-workflow-bugs](examples/workflows/p5-in-comfy-workflow-landscape.png)
+
+Here's the p5.js code. (It should be loaded with the workflows provided above.)
+
+```
+// Put this caption in the CLIP Text Encode Prompt:
+// Rolling hills, foggy day, cloudy sky, mountains with trees
+
 function setup() {
   createCanvas(512, 512);
   noLoop();
@@ -148,28 +187,24 @@ function draw() {
   let colA = color(173, 216, 230);
   let colB = color(47, 79, 79);
   let nHills = 7;
+
   for (let i = 1; i <= nHills; i++) {
     let t = map(i, 0, nHills, 0, 1);
     let col = lerpColor(colA, colB, t);
     fill(col);
-    let ry = map(pow(t, 1.5), 0, 1, 250, 500) + t * 10 * random(-1, 1);
-    let rx = 300 * random(-1, 1);
+
+    let rx = 320 * random(-1, 1);
+    let ry = map(pow(t, 1.5), 0, 1, 250, 500) +  
+      t * 15 * random(-1, 1);
     let rw = width * random(2.5, 3.5);
-    ellipse(width / 2 + rx, ry, rw, height * random(0.4, 0.5));
+    ellipse(width / 2 + rx, ry, rw, 
+            height * random(0.3, 0.5));
+  }
+}
+
+function keyPressed() {
+  if (key === " ") {
+    draw();
   }
 }
 ```
-
-I recommend developing and debugging sketches first in a dedicated p5.js editor such as the p5.js Web Editor, OpenProcessing, or a local editor. The ComfyUI node is best treated as the place where an already-working sketch is run inside an image-generation workflow.
-
-## Troubleshooting
-
-If the `p5js image` node does not appear, restart ComfyUI and refresh the browser.
-
-If the iframe is blank, press **Run Sketch** and check that your sketch calls `createCanvas()`.
-
-If **Queue Prompt** fails, run the sketch manually first, then queue again.
-
-If the output dimensions matter, connect the p5 node to a `Preview Image` node and inspect the result before a long generation run.
-
-If an older sketch behaves strangely, check whether it relies on p5 1.x behavior or `p5.sound`.
