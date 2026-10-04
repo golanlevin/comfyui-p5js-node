@@ -354,6 +354,28 @@ function getPaneHeights(node) {
 }
 
 /**
+ * Restore saved pane heights from node properties into the live widget state.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @returns {boolean} True when saved pane heights were applied.
+ */
+function restorePaneHeights(node) {
+  const savedHeights = node.properties?.p5jsPaneHeights;
+  if (!savedHeights || typeof savedHeights !== "object") return false;
+
+  const heights = getPaneHeights(node);
+  for (const pane of Object.keys(DEFAULT_PANE_HEIGHTS)) {
+    const value = Number(savedHeights[pane]);
+    if (Number.isFinite(value)) {
+      heights[pane] = Math.max(PANE_MIN_HEIGHTS[pane], value);
+    }
+  }
+  savePaneHeights(node);
+  refreshNodeLayout(node);
+  return true;
+}
+
+/**
  * Persist pane heights onto node.properties so workflows can remember them.
  *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
@@ -384,6 +406,30 @@ function getSavedScriptProperty(node) {
   return typeof node.properties?.p5jsScript === "string"
     ? node.properties.p5jsScript
     : undefined;
+}
+
+/**
+ * Read sketch source from any workflow-load location ComfyUI may expose.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @returns {string | undefined} Serialized script source, if found.
+ */
+function getSerializedScript(node) {
+  const propertyScript = getSavedScriptProperty(node);
+  if (propertyScript) return propertyScript;
+
+  const scriptWidget = getScriptWidget(node);
+  if (typeof scriptWidget?.value === "string" && scriptWidget.value) {
+    return scriptWidget.value;
+  }
+
+  if (typeof node.widgets_values_named?.script === "string") {
+    return node.widgets_values_named.script;
+  }
+
+  const scriptIndex = getWidgetIndex(node, "script");
+  const indexedValue = node.widgets_values?.[scriptIndex];
+  return typeof indexedValue === "string" && indexedValue ? indexedValue : undefined;
 }
 
 /**
@@ -698,6 +744,41 @@ function getWidgetIndex(node, name) {
 }
 
 /**
+ * Replace the entire contents of a CodeMirror editor.
+ *
+ * @param {object} editor CodeMirror EditorView.
+ * @param {string} value New document text.
+ */
+function setCodeMirrorDocument(editor, value) {
+  editor.dispatch({
+    changes: {
+      from: 0,
+      to: editor.state.doc.length,
+      insert: value,
+    },
+  });
+}
+
+/**
+ * Push script source into the widget, CodeMirror editor, and backup property.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @param {string} script Sketch source to install.
+ */
+function setScriptValue(node, script) {
+  const widget = getScriptWidget(node);
+  if (!widget || typeof script !== "string") return;
+
+  widget.value = script;
+  widget._p5jsPendingValue = script;
+  saveScriptProperty(node, script);
+
+  if (widget._cmEditor && widget._cmEditor.state.doc.toString() !== script) {
+    setCodeMirrorDocument(widget._cmEditor, script);
+  }
+}
+
+/**
  * Find the script editor widget on a node.
  *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
@@ -767,6 +848,37 @@ function installWorkflowSerialization(node) {
   };
 
   node._p5jsWorkflowSerializationInstalled = true;
+}
+
+/**
+ * Restore saved sketch text after a workflow is loaded.
+ *
+ * ComfyUI can apply workflow widget values after custom DOM widgets are
+ * constructed. CodeMirror does not automatically notice later widget.value
+ * changes, so this retry loop re-pushes serialized source into the editor once
+ * both the node properties and editor widget are available.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ */
+function restoreScriptAfterWorkflowLoad(node) {
+  let attempts = 0;
+
+  function attemptRestore() {
+    restorePaneHeights(node);
+
+    const script = getSerializedScript(node);
+    if (script) {
+      setScriptValue(node, script);
+    }
+
+    attempts += 1;
+    const widget = getScriptWidget(node);
+    if ((!widget?._cmEditor || !script) && attempts < 120) {
+      requestAnimationFrame(attemptRestore);
+    }
+  }
+
+  requestAnimationFrame(attemptRestore);
 }
 
 /**
@@ -845,6 +957,9 @@ async function mountCodeMirror(widget, container, initialValue) {
   widget._cmEditor = editor;
   widget._p5jsGetValue = () => editor.state.doc.toString();
   widget.serializeValue = widget._p5jsGetValue;
+  if (typeof widget._p5jsPendingValue === "string") {
+    setCodeMirrorDocument(editor, widget._p5jsPendingValue);
+  }
   if (widget._p5jsNode) {
     saveScriptProperty(widget._p5jsNode, widget._p5jsGetValue());
   }
@@ -1178,6 +1293,7 @@ app.registerExtension({
     // and opt individual helper widgets out with widget.serialize = false.
     node.serialize_widgets = true;
     installWorkflowSerialization(node);
+    restoreScriptAfterWorkflowLoad(node);
 
     // Older saved workflows may still have a native STRING widget for script.
     // New nodes use the custom P5JS_SCRIPT widget above.
