@@ -142,7 +142,156 @@
           });
         }
 
-        function startP5Sketch() {
+        function createSketchFactory(source, sketchName) {
+          var eventNames = [
+            "preload",
+            "setup",
+            "draw",
+            "mousePressed",
+            "mouseReleased",
+            "mouseClicked",
+            "doubleClicked",
+            "mouseMoved",
+            "mouseDragged",
+            "mouseWheel",
+            "keyPressed",
+            "keyReleased",
+            "keyTyped",
+            "touchStarted",
+            "touchMoved",
+            "touchEnded",
+            "windowResized",
+            "deviceMoved",
+            "deviceTurned",
+            "deviceShaken",
+          ];
+
+          return new Function(
+            "p",
+            "window",
+            "document",
+            "console",
+            "print",
+            [
+              "var __p5Exports = {};",
+              "var __p5Api = new Proxy({",
+              "  console: console,",
+              "  print: print,",
+              "  window: window,",
+              "  document: document,",
+              "}, {",
+              "  has: function(target, key) {",
+              "    return key in target || key in p;",
+              "  },",
+              "  get: function(target, key) {",
+              "    if (key in target) return target[key];",
+              "    var value = p[key];",
+              "    return typeof value === 'function' ? value.bind(p) : value;",
+              "  },",
+              "  set: function(target, key, value) {",
+              "    target[key] = value;",
+              "    return true;",
+              "  }",
+              "});",
+              "with (__p5Api) {",
+              source,
+              eventNames.map(function (name) {
+                return (
+                  "if (typeof " +
+                  name +
+                  " === 'function') __p5Exports." +
+                  name +
+                  " = " +
+                  name +
+                  ";"
+                );
+              }).join("\n"),
+              "}",
+              "Object.keys(__p5Exports).forEach(function (name) {",
+              "  p[name] = __p5Exports[name];",
+              "});",
+              "\n//# sourceURL=/p5js/" + sketchName,
+            ].join("\n"),
+          );
+        }
+
+        function getInstanceModeSketch(source, sketchName) {
+          var trimmed = source.trim();
+
+          if (
+            /^new\s+p5\s*\(/.test(trimmed) ||
+            /[;\n]\s*new\s+p5\s*\(/.test(trimmed)
+          ) {
+            new Function(
+              "window",
+              "document",
+              "console",
+              "print",
+              "p5",
+              [
+                trimmed,
+                "return true;",
+                "\n//# sourceURL=/p5js/" + sketchName,
+              ].join("\n"),
+            )(window, document, console, window.print, window.p5);
+            return { started: true };
+          }
+
+          var expressionMatch =
+            trimmed.match(/^module\.exports\s*=\s*([\s\S]+?)\s*;?$/) ||
+            trimmed.match(/^export\s+default\s+([\s\S]+?)\s*;?$/) ||
+            trimmed.match(/^(?:const|let|var)\s+\w+\s*=\s*([\s\S]+?)\s*;?$/);
+
+          if (expressionMatch) {
+            return {
+              factory: new Function(
+                "window",
+                "document",
+                "console",
+                "print",
+                "p5",
+                [
+                  "var __factory = (" + expressionMatch[1] + ");",
+                  "if (typeof __factory !== 'function') {",
+                  "  throw new Error('Instance-mode p5 sketch did not evaluate to a function.');",
+                  "}",
+                  "return __factory;",
+                  "\n//# sourceURL=/p5js/" + sketchName,
+                ].join("\n"),
+              )(window, document, console, window.print, window.p5),
+            };
+          }
+
+          var namedFunctionMatch = trimmed.match(
+            /^function\s+(\w+)\s*\([^)]*\)\s*\{[\s\S]*\}\s*;?$/,
+          );
+          if (
+            namedFunctionMatch &&
+            !/^(setup|draw|preload)$/.test(namedFunctionMatch[1])
+          ) {
+            return {
+              factory: new Function(
+                "window",
+                "document",
+                "console",
+                "print",
+                "p5",
+                [
+                  trimmed,
+                  "if (typeof " + namedFunctionMatch[1] + " !== 'function') {",
+                  "  throw new Error('Instance-mode p5 sketch did not define a function.');",
+                  "}",
+                  "return " + namedFunctionMatch[1] + ";",
+                  "\n//# sourceURL=/p5js/" + sketchName,
+                ].join("\n"),
+              )(window, document, console, window.print, window.p5),
+            };
+          }
+
+          return null;
+        }
+
+        function startP5Sketch(source, sketchName) {
           if (!window.p5) {
             showError("p5.js did not load.");
             return;
@@ -150,8 +299,23 @@
           if (findCanvas()) return;
 
           try {
-            new window.p5();
             installPrintBridge();
+            var instanceSketch = getInstanceModeSketch(source, sketchName);
+            if (instanceSketch?.factory) {
+              new window.p5(instanceSketch.factory);
+            } else if (instanceSketch?.started) {
+              // Direct instance-mode sketches already called new p5(...).
+            } else {
+              new window.p5(function (p) {
+                createSketchFactory(source, sketchName)(
+                  p,
+                  window,
+                  document,
+                  console,
+                  window.print,
+                );
+              });
+            }
             setTimeout(installPrintBridge, 0);
           } catch (error) {
             showError(error && error.stack ? error.stack : String(error), error);
@@ -245,12 +409,9 @@
               return response.text();
             })
             .then(function (source) {
-              var script_tag = document.createElement("script");
-              script_tag.type = "text/javascript";
-              script_tag.text =
-                source + "\n//# sourceURL=/p5js/" + sketchName + "\n";
-              document.body.appendChild(script_tag);
-              setTimeout(startP5Sketch, 0);
+              setTimeout(function () {
+                startP5Sketch(source, sketchName);
+              }, 0);
             })
             .catch(function (error) {
               showError(error && error.stack ? error.stack : String(error), error);

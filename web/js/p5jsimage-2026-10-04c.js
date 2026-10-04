@@ -269,7 +269,12 @@ function canvasToPngBlob(canvas) {
 // Save the current script and (re)load it into the iframe so p5.js runs it.
 async function loadSketch(iframe, sketchfile, srcCode) {
   await saveSketch(sketchfile, srcCode);
-  iframe.src = p5jsPreviewSrc + "?sketch=" + sketchfile + ".js";
+  iframe.src =
+    p5jsPreviewSrc +
+    "?sketch=" +
+    encodeURIComponent(sketchfile + ".js") +
+    "&reload=" +
+    Date.now();
 }
 
 // Save the current script, reload it into the iframe, and wait for a capture.
@@ -491,7 +496,7 @@ app.registerExtension({
           },
         });
         const runButton = $el("button", {
-          textContent: "Run Sketch",
+          textContent: "> Run Sketch",
           style: {
             border: "1px solid #383d45",
             borderRadius: "3px",
@@ -593,15 +598,6 @@ app.registerExtension({
               throw e;
             });
         };
-
-        //add run sketch button first so it sits above the iframe
-        const btn = node.addWidget(
-          "button",
-          "Run Sketch",
-          "run_p5js_sketch",
-          () => node._p5jsRunSketch(),
-        );
-        btn.serializeValue = () => undefined;
 
         // addDOMWidget mounts the iframe inside ComfyUI's DOM-widget container,
         // which is automatically positioned/scaled by ComfyUI as the canvas pans and zooms.
