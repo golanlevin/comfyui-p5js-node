@@ -2,6 +2,36 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { $el } from "/scripts/ui.js";
 
+/*
+ * Maintenance notes
+ * -----------------
+ * This frontend module does three jobs for the ComfyUI custom node:
+ *
+ * 1. Replace the raw script textarea with a CodeMirror editor and a Run Sketch
+ *    button. ComfyUI widget values can lag behind DOM editor state, so sketch
+ *    execution and prompt serialization read directly from the live CodeMirror
+ *    document when available.
+ * 2. Save the current sketch source into ComfyUI's temp/p5js area, load it in
+ *    a sandboxed preview iframe, and ask that iframe to return a PNG Blob of
+ *    its own canvas. Capturing inside the iframe avoids cross-document DOM
+ *    quirks and keeps the parent node independent of p5.js internals.
+ * 3. Provide a small p5 console pane and draggable splitters so students can
+ *    see print()/console output and resize the editor, preview, and console.
+ *
+ * Important history:
+ * - p5.js 2.x no longer behaved like the older global-mode injection this node
+ *   originally relied on, so the preview iframe now wraps global-mode sketches
+ *   into instance mode while still accepting explicit instance-mode sketches.
+ * - RunComfy/ComfyUI serves uploaded .js files via /view with a MIME type that
+ *   Chrome refuses to execute as a script. The iframe therefore fetches sketch
+ *   source as text instead of inserting a <script src="..."> tag.
+ * - p5.js can create a default 100x100 canvas before the user sketch runs.
+ *   The iframe removes pre-existing canvases and waits for setup()/draw()
+ *   readiness before capture, preventing accidental black default images.
+ * - The old date-suffixed filenames were only cache-busting during debugging.
+ *   The stable extension filename is web/js/p5jsimage.js.
+ */
+
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
 const P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
 let canvasCaptureRequestId = 0;
@@ -19,6 +49,17 @@ const DEFAULT_PANE_HEIGHTS = {
 const DEFAULT_SKETCH =
   "function setup() {\n  createCanvas(512, 512);\n}\n\nfunction draw() {\n  background(220);\n}";
 
+/**
+ * Upload a p5 sketch source file into ComfyUI's temporary p5js folder.
+ *
+ * ComfyUI's upload endpoint is image-oriented, but it accepts arbitrary files
+ * and exposes them through /view, which is enough for the preview iframe to
+ * fetch the sketch text.
+ *
+ * @param {string} filename Filename stem without the .js suffix.
+ * @param {string} srcCode JavaScript source code from the editor.
+ * @returns {Promise<Response>} The upload response from ComfyUI.
+ */
 async function saveSketch(filename, srcCode) {
   try {
     const blob = new Blob([srcCode], { type: "text/plain" });
@@ -27,7 +68,7 @@ async function saveSketch(filename, srcCode) {
     body.append("image", file);
     body.append("subfolder", "p5js");
     body.append("type", "temp");
-    body.append("overwrite", "true"); //can also be set to 1
+    body.append("overwrite", "true");
     const resp = await api.fetchApi("/upload/image", {
       method: "POST",
       body,
@@ -43,12 +84,29 @@ async function saveSketch(filename, srcCode) {
     console.error("Error sending sketch file for saving:", e);
     throw e;
   }
-} //end saveSketch
+}
 
+/**
+ * Find the p5 canvas in a document.
+ *
+ * @param {Document | null | undefined} doc iframe document to inspect.
+ * @returns {HTMLCanvasElement | null} The default p5 canvas or first canvas.
+ */
 function findP5Canvas(doc) {
   return doc?.getElementById("defaultCanvas0") || doc?.querySelector("canvas");
 }
 
+/**
+ * Ask the preview iframe to capture its canvas as a PNG Blob.
+ *
+ * The iframe owns the canvas and can safely call toBlob() on it. The parent
+ * retries the capture request while the iframe is navigating so a Run Sketch
+ * click does not race the iframe load event.
+ *
+ * @param {HTMLIFrameElement} iframe Preview iframe DOM element.
+ * @param {number} [timeoutMs=15000] Maximum time to wait for a response.
+ * @returns {Promise<Blob>} PNG image data captured by the iframe.
+ */
 function captureCanvasFromIframe(iframe, timeoutMs = 15000) {
   const requestId = ++canvasCaptureRequestId;
 
@@ -77,6 +135,12 @@ function captureCanvasFromIframe(iframe, timeoutMs = 15000) {
       reject(new Error("Timed out waiting for p5.js canvas capture"));
     }, timeoutMs + 1000);
 
+    /**
+     * Resolve the pending capture promise when the matching iframe response
+     * arrives.
+     *
+     * @param {MessageEvent} event postMessage event from the preview iframe.
+     */
     function onMessage(event) {
       const data = event.data || {};
       if (
@@ -109,6 +173,11 @@ function captureCanvasFromIframe(iframe, timeoutMs = 15000) {
   });
 }
 
+/**
+ * Build the node-local console pane used for p5 print()/console output.
+ *
+ * @returns {HTMLDivElement & {_output?: HTMLDivElement}} Console pane element.
+ */
 function createConsolePane() {
   const pane = $el("div", {
     style: {
@@ -190,12 +259,24 @@ function createConsolePane() {
   return pane;
 }
 
+/**
+ * Remove all visible output lines from the p5 console pane.
+ *
+ * @param {{_output?: HTMLElement} | null | undefined} pane Console pane.
+ */
 function clearConsolePane(pane) {
   if (pane?._output) {
     pane._output.textContent = "";
   }
 }
 
+/**
+ * Append one formatted line to the p5 console pane.
+ *
+ * @param {{_output?: HTMLElement} | null | undefined} pane Console pane.
+ * @param {string} level Console level such as log, info, warn, or error.
+ * @param {string} message Already-formatted message text.
+ */
 function appendConsoleMessage(pane, level, message) {
   if (!pane?._output) return;
 
@@ -219,7 +300,19 @@ function appendConsoleMessage(pane, level, message) {
   pane._output.scrollTop = pane._output.scrollHeight;
 }
 
+/**
+ * Forward console messages posted by the iframe into the node console pane.
+ *
+ * @param {HTMLIFrameElement} iframe Preview iframe to listen to.
+ * @param {HTMLElement & {_output?: HTMLElement}} pane Console pane element.
+ * @returns {() => void} Detach callback for the message listener.
+ */
 function attachPreviewConsole(iframe, pane) {
+  /**
+   * Receive console bridge messages from the matching iframe only.
+   *
+   * @param {MessageEvent} event postMessage event from any frame.
+   */
   function onMessage(event) {
     const data = event.data || {};
     if (
@@ -237,6 +330,12 @@ function attachPreviewConsole(iframe, pane) {
   return () => window.removeEventListener("message", onMessage);
 }
 
+/**
+ * Get mutable editor/preview/console pane heights for a node.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @returns {{script: number, preview: number, console: number}} Pane heights.
+ */
 function getPaneHeights(node) {
   if (!node._p5jsPaneHeights) {
     const savedHeights = node.properties?.p5jsPaneHeights || {};
@@ -248,11 +347,21 @@ function getPaneHeights(node) {
   return node._p5jsPaneHeights;
 }
 
+/**
+ * Persist pane heights onto node.properties so workflows can remember them.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ */
 function savePaneHeights(node) {
   node.properties ||= {};
   node.properties.p5jsPaneHeights = { ...getPaneHeights(node) };
 }
 
+/**
+ * Ask ComfyUI to recompute DOM widget layout after pane height changes.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ */
 function refreshNodeLayout(node) {
   if (node.setSize && node.size) {
     node.setSize([node.size[0], node.size[1]]);
@@ -260,6 +369,17 @@ function refreshNodeLayout(node) {
   app.graph?.setDirtyCanvas?.(true, true);
 }
 
+/**
+ * Create a thin draggable horizontal splitter between two pane widgets.
+ *
+ * Dragging moves height from one neighboring pane to the other, which keeps the
+ * node's total height stable and avoids fighting ComfyUI's DOM-widget layout.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @param {"script" | "preview" | "console"} upperPane Pane above the splitter.
+ * @param {"script" | "preview" | "console"} lowerPane Pane below the splitter.
+ * @returns {HTMLDivElement} Splitter element.
+ */
 function createPaneSplitter(node, upperPane, lowerPane) {
   const splitter = $el("div", {
     title: "Drag to resize panes",
@@ -312,6 +432,11 @@ function createPaneSplitter(node, upperPane, lowerPane) {
 
     splitter.setPointerCapture?.(event.pointerId);
 
+    /**
+     * Resize the neighboring panes while the pointer is dragging the splitter.
+     *
+     * @param {PointerEvent} moveEvent Active pointer move event.
+     */
     function onPointerMove(moveEvent) {
       moveEvent.preventDefault();
       moveEvent.stopPropagation();
@@ -329,6 +454,11 @@ function createPaneSplitter(node, upperPane, lowerPane) {
       refreshNodeLayout(node);
     }
 
+    /**
+     * End a splitter drag and detach document-level pointer handlers.
+     *
+     * @param {PointerEvent} upEvent Pointer release event.
+     */
     function onPointerUp(upEvent) {
       upEvent.preventDefault();
       upEvent.stopPropagation();
@@ -349,6 +479,15 @@ function createPaneSplitter(node, upperPane, lowerPane) {
   return splitter;
 }
 
+/**
+ * Add a splitter as a ComfyUI DOM widget.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @param {string} name Widget name.
+ * @param {"script" | "preview" | "console"} upperPane Pane above splitter.
+ * @param {"script" | "preview" | "console"} lowerPane Pane below splitter.
+ * @returns {object} ComfyUI DOM widget object.
+ */
 function addPaneSplitterWidget(node, name, upperPane, lowerPane) {
   const splitter = createPaneSplitter(node, upperPane, lowerPane);
   const widget = node.addDOMWidget(name, "P5JS Splitter", splitter, {
@@ -361,7 +500,16 @@ function addPaneSplitterWidget(node, name, upperPane, lowerPane) {
   return widget;
 }
 
-// Poll the iframe document until p5.js has created its canvas, or time out.
+/**
+ * Poll the iframe document until p5.js has created a canvas.
+ *
+ * This is retained for older direct-canvas code paths and local debugging; the
+ * production capture path uses captureCanvasFromIframe().
+ *
+ * @param {HTMLIFrameElement} iframe Preview iframe.
+ * @param {number} [timeoutMs=15000] Maximum wait time.
+ * @returns {Promise<HTMLCanvasElement | null>} Canvas or null on timeout.
+ */
 async function waitForCanvas(iframe, timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -377,6 +525,12 @@ async function waitForCanvas(iframe, timeoutMs = 15000) {
   return null;
 }
 
+/**
+ * Determine the intended export size for a canvas.
+ *
+ * @param {HTMLCanvasElement} canvas Canvas to export.
+ * @returns {{width: number, height: number}} Pixel dimensions.
+ */
 function getCanvasExportSize(canvas) {
   const width = Math.round(canvas.clientWidth || canvas.width);
   const height = Math.round(canvas.clientHeight || canvas.height);
@@ -386,6 +540,12 @@ function getCanvasExportSize(canvas) {
   };
 }
 
+/**
+ * Convert a canvas element to a PNG Blob.
+ *
+ * @param {HTMLCanvasElement} canvas Canvas to encode.
+ * @returns {Promise<Blob | null>} PNG Blob, or null if the browser fails.
+ */
 function canvasToPngBlob(canvas) {
   const { width, height } = getCanvasExportSize(canvas);
   let exportCanvas = canvas;
@@ -401,7 +561,17 @@ function canvasToPngBlob(canvas) {
   return new Promise((r) => exportCanvas.toBlob(r, "image/png"));
 }
 
-// Save the current script and (re)load it into the iframe so p5.js runs it.
+/**
+ * Save the current script and navigate the preview iframe to that sketch.
+ *
+ * Waiting for the iframe load event prevents captures from hitting the previous
+ * document immediately after iframe.src changes.
+ *
+ * @param {HTMLIFrameElement} iframe Preview iframe.
+ * @param {string} sketchfile Filename stem for the temp sketch.
+ * @param {string} srcCode JavaScript sketch source.
+ * @returns {Promise<void>} Resolves after the iframe has loaded.
+ */
 async function loadSketch(iframe, sketchfile, srcCode) {
   await saveSketch(sketchfile, srcCode);
   const nextSrc =
@@ -417,6 +587,9 @@ async function loadSketch(iframe, sketchfile, srcCode) {
       reject(new Error("Timed out loading p5.js preview iframe"));
     }, 10000);
 
+    /**
+     * Resolve once the iframe finishes navigating to the newly uploaded sketch.
+     */
     function onLoad() {
       clearTimeout(timer);
       resolve();
@@ -427,14 +600,29 @@ async function loadSketch(iframe, sketchfile, srcCode) {
   });
 }
 
-// Save the current script, reload it into the iframe, and wait for a capture.
+/**
+ * Save, load, and wait for a canvas in the preview iframe.
+ *
+ * @param {HTMLIFrameElement} iframe Preview iframe.
+ * @param {string} sketchfile Filename stem for the temp sketch.
+ * @param {string} srcCode JavaScript sketch source.
+ * @returns {Promise<HTMLCanvasElement | null>} Canvas found by polling.
+ */
 async function runSketch(iframe, sketchfile, srcCode) {
   await loadSketch(iframe, sketchfile, srcCode);
   return waitForCanvas(iframe);
 }
 
-// Lazy-load CodeMirror 6 (only once, shared across all nodes).
 let codeMirrorPromise = null;
+
+/**
+ * Lazy-load CodeMirror 6 and JavaScript editing support.
+ *
+ * The editor is pulled from esm.sh so this custom node does not need a package
+ * build step. The promise is shared across all node instances.
+ *
+ * @returns {Promise<object>} CodeMirror modules used by mountCodeMirror().
+ */
 function loadCodeMirror() {
   if (!codeMirrorPromise) {
     codeMirrorPromise = Promise.all([
@@ -457,14 +645,36 @@ function loadCodeMirror() {
   return codeMirrorPromise;
 }
 
+/**
+ * Extract the default value from a ComfyUI custom-widget input spec.
+ *
+ * @param {Array | object | undefined} inputData ComfyUI input metadata.
+ * @param {string} [fallback=""] Fallback when no default is present.
+ * @returns {string} Default script text.
+ */
 function getInputDefault(inputData, fallback = "") {
   return inputData?.[1]?.default ?? inputData?.default ?? fallback;
 }
 
+/**
+ * Find the script editor widget on a node.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @returns {object | undefined} Script widget.
+ */
 function getScriptWidget(node) {
   return node.widgets.find((w) => w.name === "script");
 }
 
+/**
+ * Read the current sketch source from the live editor.
+ *
+ * The critical detail is the _p5jsGetValue/_cmEditor path: reading widget.value
+ * alone can return stale or empty text in modern ComfyUI DOM widgets.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @returns {string} Current p5 sketch source.
+ */
 function getScriptValue(node) {
   const widget = getScriptWidget(node);
   if (!widget) return DEFAULT_SKETCH;
@@ -473,6 +683,14 @@ function getScriptValue(node) {
   return widget.value ?? DEFAULT_SKETCH;
 }
 
+/**
+ * Mount CodeMirror into a prepared container and bind it to a widget.
+ *
+ * @param {object} widget ComfyUI widget object used for serialization.
+ * @param {HTMLElement} container Empty DOM element for the editor.
+ * @param {string} initialValue Initial sketch source.
+ * @returns {Promise<void>} Resolves after CodeMirror is mounted.
+ */
 async function mountCodeMirror(widget, container, initialValue) {
   const {
     EditorView,
@@ -540,6 +758,15 @@ async function mountCodeMirror(widget, container, initialValue) {
   widget.serializeValue = widget._p5jsGetValue;
 }
 
+/**
+ * Upgrade an older native textarea script widget to CodeMirror.
+ *
+ * New workflows use the P5JS_SCRIPT custom widget directly; this fallback keeps
+ * older saved workflows editable.
+ *
+ * @param {object} widget Existing ComfyUI script widget.
+ * @returns {Promise<void>} Resolves after the upgrade attempt.
+ */
 async function attachCodeMirror(widget) {
   console.log("[p5js] script widget:", widget);
   console.log("[p5js] widget keys:", Object.keys(widget));
@@ -610,8 +837,24 @@ loadCodeMirror();
 app.registerExtension({
   name: "HYPE_P5JSImage",
 
+  /**
+   * Register custom DOM widgets used by the Python node's INPUT_TYPES.
+   *
+   * P5JS_SCRIPT replaces the multiline source editor. P5JS hosts the iframe
+   * preview, wires up Run Sketch, and adds the console pane.
+   *
+   * @returns {object} Custom widget factory map for ComfyUI.
+   */
   getCustomWidgets(app) {
     return {
+      /**
+       * Create the CodeMirror-backed sketch editor widget.
+       *
+       * @param {import("/scripts/app.js").LGraphNode} node Owning node.
+       * @param {string} inputName Widget/input name from INPUT_TYPES.
+       * @param {Array | object | undefined} inputData ComfyUI input metadata.
+       * @returns {object} ComfyUI DOM widget.
+       */
       P5JS_SCRIPT(node, inputName, inputData) {
         getPaneHeights(node);
         const initialValue = getInputDefault(inputData, DEFAULT_SKETCH);
@@ -673,6 +916,8 @@ app.registerExtension({
           },
         });
 
+        // The toolbar button intentionally calls the same node method used by
+        // other code paths so Run Sketch and Queue Prompt stay in sync.
         runButton.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -703,6 +948,9 @@ app.registerExtension({
         widget._p5jsCustomScript = true;
         widget._p5jsGetValue = () => widget.value ?? "";
         widget.serializeValue = () => getScriptValue(node);
+
+        // Splitter widgets live between the pane widgets. ComfyUI stacks DOM
+        // widgets in creation order, so this separator follows the editor.
         addPaneSplitterWidget(
           node,
           "p5js_script_preview_splitter",
@@ -722,6 +970,13 @@ app.registerExtension({
         return widget;
       },
 
+      /**
+       * Create the p5 preview iframe and console widgets.
+       *
+       * @param {import("/scripts/app.js").LGraphNode} node Owning node.
+       * @param {string} inputName Widget/input name from INPUT_TYPES.
+       * @returns {object} ComfyUI DOM widget for the preview iframe.
+       */
       P5JS(node, inputName) {
         getPaneHeights(node);
         const d = new Date();
@@ -752,6 +1007,11 @@ app.registerExtension({
         const detachConsole = attachPreviewConsole(iframe, consolePane);
 
         node.serialize_widgets = false;
+
+        // Run Sketch saves the current editor text, reloads the preview iframe,
+        // and asks the iframe to capture the rendered canvas. It deliberately
+        // does not upload the PNG to ComfyUI; that happens during serialization
+        // when the workflow actually queues.
         node._p5jsRunSketch = () => {
           clearConsolePane(consolePane);
           const srcCode = getScriptValue(node);
@@ -780,6 +1040,7 @@ app.registerExtension({
         widget.consolePane = consolePane;
         widget.detachConsole = detachConsole;
 
+        // This separator follows the preview and resizes preview/console.
         addPaneSplitterWidget(
           node,
           "p5js_preview_console_splitter",
@@ -803,6 +1064,15 @@ app.registerExtension({
     };
   },
 
+  /**
+   * Finalize each HYPE_P5JSImage node after ComfyUI creates its widgets.
+   *
+   * This hook supplies backward compatibility for old workflows and overrides
+   * the P5JS widget's serialization so Queue Prompt uploads a PNG file path
+   * that the Python node can load as an IMAGE.
+   *
+   * @param {import("/scripts/app.js").LGraphNode} node Newly created node.
+   */
   nodeCreated(node) {
     if (node.constructor.comfyClass !== "HYPE_P5JSImage") return;
 
@@ -815,10 +1085,11 @@ app.registerExtension({
       });
     }
 
-    //get the p5js widget
     const p5jsWidget = node.widgets.find((w) => w.name === "image");
 
-    //add serialize method here....
+    // serializeValue is called by ComfyUI while graphToPrompt is building the
+    // prompt. Returning "p5js/name.png [temp]" matches ComfyUI's annotated file
+    // path convention and lets the Python side call LoadImage safely.
     p5jsWidget.serializeValue = async () => {
       // Always reload the sketch before capture so queued workflows use the
       // current editor contents, not a previously-rendered canvas.

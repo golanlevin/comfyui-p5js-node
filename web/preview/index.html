@@ -23,6 +23,37 @@
         var P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
         var originalConsole = {};
 
+        /*
+         * Preview iframe runtime
+         * ----------------------
+         * This page is loaded inside the ComfyUI node's iframe. It receives the
+         * sketch filename in the query string, fetches that file from ComfyUI's
+         * temp/p5js folder as text, runs the sketch with p5.js 2.3.4, and sends
+         * console output / canvas captures back to the parent node via
+         * postMessage().
+         *
+         * Why this is more complex than a normal p5.js page:
+         * - RunComfy/ComfyUI's /view endpoint can serve uploaded .js files with
+         *   application/octet-stream, so Chrome refuses direct <script src>.
+         *   Fetching text and evaluating it locally avoids strict MIME errors.
+         * - Classroom sketches are usually global-mode p5 sketches. p5.js 2.x
+         *   is happier when we create an explicit instance, so global-mode code
+         *   is executed inside a Proxy-backed wrapper that maps p5 functions
+         *   like createCanvas(), background(), and line() onto the instance.
+         * - Students may paste instance-mode sketches too. The loader detects
+         *   common instance-mode forms and avoids wrapping them unnecessarily.
+         * - p5.js can create a default 100x100 canvas before user setup() runs.
+         *   We remove old/default canvases and wait for setup()/draw() readiness
+         *   before capture so ComfyUI receives the student's actual image.
+         */
+
+        /**
+         * Display a fatal preview error inside the iframe and mirror it to the
+         * browser console.
+         *
+         * @param {string} message User-visible error text.
+         * @param {Error | unknown} [error] Original thrown value.
+         */
         function showError(message, error) {
           console.error("[p5js preview]", message, error || "");
           document.body.textContent = message;
@@ -33,6 +64,12 @@
             "white-space: pre-wrap;";
         }
 
+        /**
+         * Convert any console argument into text suitable for postMessage.
+         *
+         * @param {unknown} value Console argument.
+         * @returns {string} Printable representation.
+         */
         function formatConsoleArg(value) {
           if (value instanceof Error) {
             return value.stack || value.message;
@@ -47,6 +84,12 @@
           }
         }
 
+        /**
+         * Send one console/status message to the parent node.
+         *
+         * @param {string} level Console level.
+         * @param {IArguments | Array<unknown>} args Console arguments.
+         */
         function postConsoleMessage(level, args) {
           var values = Array.prototype.slice.call(args).map(formatConsoleArg);
           window.parent.postMessage(
@@ -62,10 +105,18 @@
           );
         }
 
+        /**
+         * Convenience wrapper for iframe runtime status messages.
+         *
+         * @param {...unknown} arguments Status message parts.
+         */
         function postStatus() {
           postConsoleMessage("info", arguments);
         }
 
+        /**
+         * Patch console methods so p5 console output appears in the node pane.
+         */
         function installConsoleBridge() {
           ["debug", "info", "log", "warn", "error"].forEach(function (level) {
             if (!originalConsole[level]) {
@@ -78,6 +129,12 @@
           });
         }
 
+        /**
+         * Replace window.print() with a console bridge.
+         *
+         * p5.js aliases print() to console logging, but installing this early
+         * keeps print() useful from student sketches and from p5 internals.
+         */
         function installPrintBridge() {
           window.print = function () {
             postConsoleMessage("log", arguments);
@@ -86,17 +143,31 @@
           window.__p5jsNodePrintBridge = window.print;
         }
 
+        /**
+         * Locate the current p5 canvas in the iframe document.
+         *
+         * @returns {HTMLCanvasElement | null} p5 canvas or first canvas.
+         */
         function findCanvas() {
           return document.getElementById("defaultCanvas0") ||
             document.querySelector("canvas");
         }
 
+        /**
+         * Remove any existing/default canvases before starting a new sketch.
+         */
         function removeExistingCanvases() {
           document.querySelectorAll("canvas").forEach(function (canvas) {
             canvas.remove();
           });
         }
 
+        /**
+         * Compute the pixel size that should be exported.
+         *
+         * @param {HTMLCanvasElement} canvas Canvas to capture.
+         * @returns {{width: number, height: number}} Export dimensions.
+         */
         function getCanvasExportSize(canvas) {
           var width = Math.round(canvas.clientWidth || canvas.width);
           var height = Math.round(canvas.clientHeight || canvas.height);
@@ -106,6 +177,13 @@
           };
         }
 
+        /**
+         * Encode a canvas as PNG data.
+         *
+         * @param {HTMLCanvasElement} canvas Canvas to encode.
+         * @returns {Promise<{blob: Blob, width: number, height: number}>}
+         *   PNG blob and capture size.
+         */
         function canvasToPngBlob(canvas) {
           var size = getCanvasExportSize(canvas);
           var exportCanvas = canvas;
@@ -133,9 +211,22 @@
           });
         }
 
+        /**
+         * Wait until a real sketch canvas exists and the sketch is ready.
+         *
+         * The readiness flags are set by wrapped setup()/draw() functions. The
+         * short settled fallback prevents a sketch without setup()/draw() from
+         * waiting forever.
+         *
+         * @param {number} timeoutMs Maximum wait time.
+         * @returns {Promise<HTMLCanvasElement | null>} Canvas or null.
+         */
         function waitForCanvas(timeoutMs) {
           var start = Date.now();
           return new Promise(function (resolve) {
+            /**
+             * Poll once for a usable canvas, then reschedule if needed.
+             */
             function check() {
               var canvas = findCanvas();
               var startedAt = window.__p5jsSketchStartedAt || start;
@@ -159,6 +250,18 @@
           });
         }
 
+        /**
+         * Build a function that runs global-mode sketch source against a p5
+         * instance.
+         *
+         * The Proxy makes calls like createCanvas(512, 512) resolve to p's
+         * methods while still preserving local variables declared by the
+         * student's sketch.
+         *
+         * @param {string} source Student sketch source.
+         * @param {string} sketchName Filename used for browser source maps.
+         * @returns {Function} Function that installs setup/draw/events on p.
+         */
         function createSketchFactory(source, sketchName) {
           var eventNames = [
             "preload",
@@ -249,11 +352,20 @@
           );
         }
 
+        /**
+         * Mark the beginning of a sketch run for readiness/capture timing.
+         */
         function markSketchStarting() {
           window.__p5jsSketchReady = false;
           window.__p5jsSketchStartedAt = Date.now();
         }
 
+        /**
+         * Wrap an instance-mode factory so setup()/draw() update readiness.
+         *
+         * @param {(p: object) => void} factory User-provided p5 instance factory.
+         * @returns {(p: object) => void} Wrapped p5 instance factory.
+         */
         function wrapInstanceFactory(factory) {
           return function (p) {
             factory(p);
@@ -281,6 +393,17 @@
           };
         }
 
+        /**
+         * Detect and prepare common p5 instance-mode sketch forms.
+         *
+         * Supported forms include direct new p5(...), module.exports = fn,
+         * export default fn, const sketch = fn, and function sketch(p) {...}.
+         *
+         * @param {string} source Student sketch source.
+         * @param {string} sketchName Filename used for browser source maps.
+         * @returns {{started?: boolean, factory?: Function} | null}
+         *   Direct sketches are already started; factory sketches are returned.
+         */
         function getInstanceModeSketch(source, sketchName) {
           var trimmed = source.trim();
 
@@ -361,6 +484,12 @@
           return null;
         }
 
+        /**
+         * Start one p5 sketch from fetched source.
+         *
+         * @param {string} source Student sketch source.
+         * @param {string} sketchName Filename used for browser source maps.
+         */
         function startP5Sketch(source, sketchName) {
           if (!window.p5) {
             showError("p5.js did not load.");
@@ -398,10 +527,15 @@
         installConsoleBridge();
         installPrintBridge();
 
+        // Surface uncaught student-code errors in the iframe itself; otherwise
+        // they can disappear into the browser console while ComfyUI only sees a
+        // missing canvas.
         window.addEventListener("error", function (event) {
           showError(event.message || "Error while running p5.js sketch.", event.error);
         });
 
+        // Promise rejections can come from async p5 preload/setup code or from
+        // failed fetch/evaluation steps.
         window.addEventListener("unhandledrejection", function (event) {
           showError(
             event.reason && event.reason.stack
@@ -411,6 +545,9 @@
           );
         });
 
+        // The parent node sends captureCanvas after the iframe loads. Capture
+        // happens here, in the same document that owns the canvas, then the PNG
+        // Blob is sent back to the matching parent requestId.
         window.addEventListener("message", function (event) {
           var data = event.data || {};
           if (
@@ -463,6 +600,8 @@
         var sketchName = urlParams.get("sketch");
 
         if (sketchName) {
+          // Fetch the sketch source as text to avoid Chrome's strict MIME
+          // checks against ComfyUI's /view endpoint for uploaded .js files.
           var sketchUrl =
             "/view?filename=" +
             sketchName +
