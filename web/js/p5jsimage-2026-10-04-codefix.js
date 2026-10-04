@@ -34,8 +34,8 @@ import { $el } from "/scripts/ui.js";
  * - p5.js can create a default 100x100 canvas before the user sketch runs.
  *   The iframe removes pre-existing canvases and waits for setup()/draw()
  *   readiness before capture, preventing accidental black default images.
- * - Date-suffixed filenames were used only when a RunComfy cache-bust was
- *   required during debugging. The stable extension filename is
+ * - Date-suffixed filenames are used only when a RunComfy cache-bust is
+ *   required during debugging. The intended stable extension filename is
  *   web/js/p5jsimage.js.
  */
 
