@@ -62,7 +62,7 @@ The most direct installation path is RunComfy's terminal.
 2. Go to the ComfyUI custom nodes folder:
 
 ```sh
-cd ComfyUI/custom_nodes
+cd custom_nodes
 ```
 
 3. Clone this repository:
@@ -76,16 +76,23 @@ git clone https://github.com/golanlevin/comfyui-p5js-node.git
 6. In the Assets browser, confirm that `Home > ComfyUI > custom_nodes > comfyui-p5js-node` exists.
 7. In the ComfyUI graph, right-click and add the `p5js image` node.
 
-If you are testing a branch:
+If you are testing a branch (*this is not common*):
 
 ```sh
-cd ComfyUI/custom_nodes
+cd custom_nodes
 git clone https://github.com/golanlevin/comfyui-p5js-node.git
 cd comfyui-p5js-node
 git checkout BRANCH_NAME
 ```
 
-RunComfy also supports uploading a prepared custom node folder into `ComfyUI/custom_nodes` through its file browser.
+<!--
+
+To use this feature you need BOTH: (1) 'allow_git_url_install = true' in config.ini ([default] section), AND (2) ComfyUI launched with a loopback --listen (127.0.0.1 or ::1). Both values are read once at ComfyUI startup, so changing either one needs a restart, done with the server down: stop ComfyUI, change the setting, then start it again.
+
+
+-->
+
+RunComfy also supports uploading a prepared custom node folder into `custom_nodes` through its file browser.
 
 ## Minimal Node Test
 
