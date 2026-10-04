@@ -62,6 +62,10 @@
           );
         }
 
+        function postStatus() {
+          postConsoleMessage("info", arguments);
+        }
+
         function installConsoleBridge() {
           ["debug", "info", "log", "warn", "error"].forEach(function (level) {
             if (!originalConsole[level]) {
@@ -85,6 +89,12 @@
         function findCanvas() {
           return document.getElementById("defaultCanvas0") ||
             document.querySelector("canvas");
+        }
+
+        function removeExistingCanvases() {
+          document.querySelectorAll("canvas").forEach(function (canvas) {
+            canvas.remove();
+          });
         }
 
         function getCanvasExportSize(canvas) {
@@ -279,6 +289,7 @@
             /[;\n]\s*new\s+p5\s*\(/.test(trimmed)
           ) {
             markSketchStarting();
+            postStatus("Running direct instance-mode p5 sketch.");
             new Function(
               "window",
               "document",
@@ -300,6 +311,7 @@
             trimmed.match(/^(?:const|let|var)\s+\w+\s*=\s*([\s\S]+?)\s*;?$/);
 
           if (expressionMatch) {
+            postStatus("Running factory-style instance-mode p5 sketch.");
             return {
               factory: new Function(
                 "window",
@@ -326,6 +338,7 @@
             namedFunctionMatch &&
             !/^(setup|draw|preload)$/.test(namedFunctionMatch[1])
           ) {
+            postStatus("Running named instance-mode p5 sketch.");
             return {
               factory: new Function(
                 "window",
@@ -353,9 +366,9 @@
             showError("p5.js did not load.");
             return;
           }
-          if (findCanvas()) return;
 
           try {
+            removeExistingCanvases();
             installPrintBridge();
             var instanceSketch = getInstanceModeSketch(source, sketchName);
             if (instanceSketch?.factory) {
@@ -364,6 +377,7 @@
             } else if (instanceSketch?.started) {
               // Direct instance-mode sketches already called new p5(...).
             } else {
+              postStatus("Running wrapped global-mode p5 sketch.");
               markSketchStarting();
               new window.p5(function (p) {
                 createSketchFactory(source, sketchName)(
@@ -411,6 +425,10 @@
               if (!canvas) {
                 throw new Error("p5.js sketch did not produce a canvas.");
               }
+              postStatus(
+                "Capturing p5 canvas:",
+                canvas.width + "x" + canvas.height,
+              );
               return canvasToPngBlob(canvas);
             })
             .then(function (capture) {
@@ -468,6 +486,11 @@
               return response.text();
             })
             .then(function (source) {
+              postStatus(
+                "Loaded p5 sketch:",
+                sketchName,
+                source.length + " chars",
+              );
               setTimeout(function () {
                 startP5Sketch(source, sketchName);
               }, 0);

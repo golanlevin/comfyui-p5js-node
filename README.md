@@ -99,6 +99,6 @@ For RunComfy-specific classroom/cloud instructions, see [runcomfy_instructions.m
 
 ## Notes for Maintainers
 
-The preview iframe lives in `web/preview/index.html`. The ComfyUI frontend extension lives in `web/js/p5jsimage-2026-10-04d.js`. The Python node wrapper lives in `p5jsimage.py`.
+The preview iframe lives in `web/preview/index.html`. The ComfyUI frontend extension lives in `web/js/p5jsimage-2026-10-04e.js`. The Python node wrapper lives in `p5jsimage.py`.
 
 The iframe uses ComfyUI's `addDOMWidget` API so the preview remains attached to the node while panning and zooming. The script editor is upgraded to CodeMirror and stops pointer events from bubbling into ComfyUI's canvas so editing code does not start a node drag.
