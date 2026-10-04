@@ -455,6 +455,8 @@ app.registerExtension({
         const initialValue = getInputDefault(inputData, DEFAULT_SKETCH);
         const container = $el("div", {
           style: {
+            display: "flex",
+            flexDirection: "column",
             width: "100%",
             height: "100%",
             minHeight: "220px",
@@ -464,6 +466,67 @@ app.registerExtension({
             cursor: "text",
           },
         });
+        const toolbar = $el("div", {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+            flex: "0 0 auto",
+            padding: "4px 6px",
+            borderBottom: "1px solid #272b30",
+            background: "#1d2024",
+            color: "#9ca3af",
+            boxSizing: "border-box",
+            cursor: "default",
+          },
+        });
+        const label = $el("span", {
+          textContent: "p5 sketch",
+          style: {
+            fontSize: "11px",
+            fontWeight: "600",
+            textTransform: "uppercase",
+            letterSpacing: "0",
+          },
+        });
+        const runButton = $el("button", {
+          textContent: "Run Sketch",
+          style: {
+            border: "1px solid #383d45",
+            borderRadius: "3px",
+            background: "#242830",
+            color: "#d8dee9",
+            font:
+              "11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            padding: "2px 8px",
+            cursor: "pointer",
+          },
+        });
+        const editorHost = $el("div", {
+          style: {
+            flex: "1 1 auto",
+            minHeight: "0",
+            overflow: "hidden",
+          },
+        });
+
+        runButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (node._p5jsRunSketch) {
+            node._p5jsRunSketch();
+          } else {
+            alert("p5.js preview is not ready yet");
+          }
+        });
+
+        for (const evt of ["pointerdown", "mousedown", "dblclick"]) {
+          toolbar.addEventListener(evt, (event) => event.stopPropagation());
+        }
+
+        toolbar.append(label, runButton);
+        container.append(toolbar, editorHost);
 
         const widget = node.addDOMWidget(
           inputName,
@@ -482,7 +545,7 @@ app.registerExtension({
           for (let i = 0; i < 5; i++) {
             await new Promise((r) => requestAnimationFrame(r));
           }
-          await mountCodeMirror(widget, container, widget.value ?? initialValue);
+          await mountCodeMirror(widget, editorHost, widget.value ?? initialValue);
         })().catch((e) => {
           console.error("Failed to mount CodeMirror editor:", e);
         });
@@ -519,22 +582,24 @@ app.registerExtension({
         const detachConsole = attachPreviewConsole(iframe, consolePane);
 
         node.serialize_widgets = false;
+        node._p5jsRunSketch = () => {
+          clearConsolePane(consolePane);
+          return loadSketch(iframe, sketchfile, getScriptValue(node))
+            .then(() => captureCanvasFromIframe(iframe))
+            .catch((e) => {
+              const err = `Error running p5.js sketch: ${e.message || e}`;
+              alert(err);
+              console.error(err, e);
+              throw e;
+            });
+        };
 
         //add run sketch button first so it sits above the iframe
         const btn = node.addWidget(
           "button",
           "Run Sketch",
           "run_p5js_sketch",
-          () => {
-            clearConsolePane(consolePane);
-            loadSketch(iframe, sketchfile, getScriptValue(node))
-              .then(() => captureCanvasFromIframe(iframe))
-              .catch((e) => {
-                const err = `Error running p5.js sketch: ${e.message || e}`;
-                alert(err);
-                console.error(err, e);
-              });
-          }
+          () => node._p5jsRunSketch(),
         );
         btn.serializeValue = () => undefined;
 
@@ -581,29 +646,16 @@ app.registerExtension({
 
     //add serialize method here....
     p5jsWidget.serializeValue = async () => {
-      //get the canvas from iframe
+      // Always reload the sketch before capture so queued workflows use the
+      // current editor contents, not a previously-rendered canvas.
       const theFrame = p5jsWidget.element;
-      let canvas = null;
-      try {
-        const iframe_doc =
-          theFrame.contentDocument || theFrame.contentWindow.document;
-        canvas = findP5Canvas(iframe_doc);
-      } catch (e) {
-        console.debug("Direct iframe canvas lookup failed; using capture bridge.", e);
-      }
-      let blob = canvas ? await canvasToPngBlob(canvas) : null;
-
-      // If the sketch has never been run (no canvas yet), run it now so the
-      // workflow still works without the user clicking "Run Sketch" first.
-      if (!blob) {
-        clearConsolePane(p5jsWidget.consolePane);
-        await loadSketch(
-          theFrame,
-          p5jsWidget.sketchfile,
-          getScriptValue(node),
-        );
-        blob = await captureCanvasFromIframe(theFrame);
-      }
+      clearConsolePane(p5jsWidget.consolePane);
+      await loadSketch(
+        theFrame,
+        p5jsWidget.sketchfile,
+        getScriptValue(node),
+      );
+      const blob = await captureCanvasFromIframe(theFrame);
 
       if (!blob) {
         const err = "Could not capture p5.js canvas";
