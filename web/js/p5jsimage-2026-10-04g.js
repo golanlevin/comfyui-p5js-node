@@ -5,6 +5,16 @@ import { $el } from "/scripts/ui.js";
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
 const P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
 let canvasCaptureRequestId = 0;
+const PANE_MIN_HEIGHTS = {
+  script: 120,
+  preview: 160,
+  console: 80,
+};
+const DEFAULT_PANE_HEIGHTS = {
+  script: 240,
+  preview: 400,
+  console: 120,
+};
 const DEFAULT_SKETCH =
   "function setup() {\n  createCanvas(512, 512);\n}\n\nfunction draw() {\n  background(220);\n}";
 
@@ -224,6 +234,118 @@ function attachPreviewConsole(iframe, pane) {
 
   window.addEventListener("message", onMessage);
   return () => window.removeEventListener("message", onMessage);
+}
+
+function getPaneHeights(node) {
+  if (!node._p5jsPaneHeights) {
+    const savedHeights = node.properties?.p5jsPaneHeights || {};
+    node._p5jsPaneHeights = {
+      ...DEFAULT_PANE_HEIGHTS,
+      ...savedHeights,
+    };
+  }
+  return node._p5jsPaneHeights;
+}
+
+function savePaneHeights(node) {
+  node.properties ||= {};
+  node.properties.p5jsPaneHeights = { ...getPaneHeights(node) };
+}
+
+function refreshNodeLayout(node) {
+  if (node.setSize && node.size) {
+    node.setSize([node.size[0], node.size[1]]);
+  }
+  app.graph?.setDirtyCanvas?.(true, true);
+}
+
+function createPaneSplitter(node, upperPane, lowerPane) {
+  const splitter = $el("div", {
+    title: "Drag to resize panes",
+    style: {
+      height: "10px",
+      width: "100%",
+      boxSizing: "border-box",
+      cursor: "row-resize",
+      background: "#2d2f33",
+      borderTop: "1px solid #17191c",
+      borderBottom: "1px solid #17191c",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+  });
+
+  const grip = $el("div", {
+    style: {
+      width: "48px",
+      height: "2px",
+      borderRadius: "2px",
+      background: "#6b7280",
+      opacity: "0.75",
+      pointerEvents: "none",
+    },
+  });
+
+  splitter.append(grip);
+
+  splitter.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const heights = getPaneHeights(node);
+    const startY = event.clientY;
+    const startUpper = heights[upperPane];
+    const startLower = heights[lowerPane];
+    const total = startUpper + startLower;
+
+    splitter.setPointerCapture?.(event.pointerId);
+
+    function onPointerMove(moveEvent) {
+      moveEvent.preventDefault();
+      moveEvent.stopPropagation();
+
+      const dy = moveEvent.clientY - startY;
+      const minUpper = PANE_MIN_HEIGHTS[upperPane];
+      const minLower = PANE_MIN_HEIGHTS[lowerPane];
+      const nextUpper = Math.max(
+        minUpper,
+        Math.min(total - minLower, startUpper + dy),
+      );
+      heights[upperPane] = nextUpper;
+      heights[lowerPane] = total - nextUpper;
+      savePaneHeights(node);
+      refreshNodeLayout(node);
+    }
+
+    function onPointerUp(upEvent) {
+      upEvent.preventDefault();
+      upEvent.stopPropagation();
+      splitter.releasePointerCapture?.(event.pointerId);
+      window.removeEventListener("pointermove", onPointerMove, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+      refreshNodeLayout(node);
+    }
+
+    window.addEventListener("pointermove", onPointerMove, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+  });
+
+  for (const evt of ["pointerdown", "mousedown", "dblclick", "wheel"]) {
+    splitter.addEventListener(evt, (event) => event.stopPropagation());
+  }
+
+  return splitter;
+}
+
+function addPaneSplitterWidget(node, name, upperPane, lowerPane) {
+  const splitter = createPaneSplitter(node, upperPane, lowerPane);
+  const widget = node.addDOMWidget(name, "P5JS Splitter", splitter, {
+    hideOnZoom: false,
+    getMinHeight: () => 10,
+  });
+  widget.serializeValue = () => undefined;
+  return widget;
 }
 
 // Poll the iframe document until p5.js has created its canvas, or time out.
@@ -478,6 +600,7 @@ app.registerExtension({
   getCustomWidgets(app) {
     return {
       P5JS_SCRIPT(node, inputName, inputData) {
+        getPaneHeights(node);
         const initialValue = getInputDefault(inputData, DEFAULT_SKETCH);
         const container = $el("div", {
           style: {
@@ -560,13 +683,19 @@ app.registerExtension({
           container,
           {
             hideOnZoom: false,
-            getMinHeight: () => 240,
+            getMinHeight: () => getPaneHeights(node).script,
           },
         );
         widget.value = initialValue;
         widget._p5jsCustomScript = true;
         widget._p5jsGetValue = () => widget.value ?? "";
         widget.serializeValue = () => getScriptValue(node);
+        addPaneSplitterWidget(
+          node,
+          "p5js_script_preview_splitter",
+          "script",
+          "preview",
+        );
 
         (async () => {
           for (let i = 0; i < 5; i++) {
@@ -581,6 +710,7 @@ app.registerExtension({
       },
 
       P5JS(node, inputName) {
+        getPaneHeights(node);
         const d = new Date();
         const base_filename =
           d.getUTCFullYear() +
@@ -631,11 +761,18 @@ app.registerExtension({
         // which is automatically positioned/scaled by ComfyUI as the canvas pans and zooms.
         const widget = node.addDOMWidget("image", "P5JS", iframe, {
           hideOnZoom: false,
-          getMinHeight: () => 400,
+          getMinHeight: () => getPaneHeights(node).preview,
         });
         widget.sketchfile = sketchfile;
         widget.consolePane = consolePane;
         widget.detachConsole = detachConsole;
+
+        addPaneSplitterWidget(
+          node,
+          "p5js_preview_console_splitter",
+          "preview",
+          "console",
+        );
 
         const consoleWidget = node.addDOMWidget(
           "p5js_console",
@@ -643,7 +780,7 @@ app.registerExtension({
           consolePane,
           {
             hideOnZoom: false,
-            getMinHeight: () => 120,
+            getMinHeight: () => getPaneHeights(node).console,
           },
         );
         consoleWidget.serializeValue = () => undefined;
