@@ -5,6 +5,8 @@ import { $el } from "/scripts/ui.js";
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
 const P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
 let canvasCaptureRequestId = 0;
+const DEFAULT_SKETCH =
+  "function setup() {\n  createCanvas(512, 512);\n}\n\nfunction draw() {\n  background(220);\n}";
 
 async function saveSketch(filename, srcCode) {
   try {
@@ -300,6 +302,83 @@ function loadCodeMirror() {
   return codeMirrorPromise;
 }
 
+function getInputDefault(inputData, fallback = "") {
+  return inputData?.[1]?.default ?? inputData?.default ?? fallback;
+}
+
+function getScriptWidget(node) {
+  return node.widgets.find((w) => w.name === "script");
+}
+
+function getScriptValue(node) {
+  return getScriptWidget(node)?.value ?? DEFAULT_SKETCH;
+}
+
+async function mountCodeMirror(widget, container, initialValue) {
+  const {
+    EditorView,
+    basicSetup,
+    javascript,
+    oneDark,
+    keymap,
+    indentWithTab,
+    indentMore,
+    indentLess,
+  } = await loadCodeMirror();
+  console.log("[p5js] CodeMirror loaded");
+
+  widget.value = initialValue ?? "";
+
+  const editor = new EditorView({
+    doc: widget.value,
+    extensions: [
+      basicSetup,
+      keymap.of([indentWithTab]),
+      javascript(),
+      oneDark,
+      EditorView.theme({
+        "&": { height: "100%", fontSize: "12px" },
+        ".cm-scroller": {
+          overflow: "auto",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        },
+      }),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          // Push the new text back into the widget, which keeps ComfyUI's
+          // prompt serialization in sync.
+          widget.value = editor.state.doc.toString();
+        }
+      }),
+    ],
+    parent: container,
+  });
+
+  // Capture-phase handler — runs before any ComfyUI listener can move focus
+  // off the editor. Manually invoke indentMore / indentLess instead of relying
+  // on CodeMirror's keymap, which can lose the race against outer listeners.
+  container.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      e.stopPropagation();
+      (e.shiftKey ? indentLess : indentMore)(editor);
+    },
+    true,
+  );
+
+  // Clicks inside the editor should place the text caret — not start a node
+  // drag. Let CodeMirror handle the event, then stop it bubbling out to
+  // ComfyUI's canvas.
+  for (const evt of ["pointerdown", "mousedown", "dblclick"]) {
+    container.addEventListener(evt, (e) => e.stopPropagation());
+  }
+
+  widget._cmEditor = editor;
+}
+
 async function attachCodeMirror(widget) {
   console.log("[p5js] script widget:", widget);
   console.log("[p5js] widget keys:", Object.keys(widget));
@@ -353,18 +432,6 @@ async function attachCodeMirror(widget) {
   }
   console.log("[p5js] mounting CodeMirror onto", target.tagName, target);
 
-  const {
-    EditorView,
-    basicSetup,
-    javascript,
-    oneDark,
-    keymap,
-    indentWithTab,
-    indentMore,
-    indentLess,
-  } = await loadCodeMirror();
-  console.log("[p5js] CodeMirror loaded");
-
   const initialValue = widget.value ?? target.value ?? "";
 
   const container = document.createElement("div");
@@ -373,55 +440,7 @@ async function attachCodeMirror(widget) {
     "box-sizing: border-box; border-radius: 4px; cursor: text;";
 
   target.parentNode.replaceChild(container, target);
-
-  const editor = new EditorView({
-    doc: initialValue,
-    extensions: [
-      basicSetup,
-      keymap.of([indentWithTab]),
-      javascript(),
-      oneDark,
-      EditorView.theme({
-        "&": { height: "100%", fontSize: "12px" },
-        ".cm-scroller": {
-          overflow: "auto",
-          fontFamily:
-            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-        },
-      }),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          // Push the new text back into the widget via its existing setter,
-          // which keeps ComfyUI's prompt serialization in sync.
-          widget.value = editor.state.doc.toString();
-        }
-      }),
-    ],
-    parent: container,
-  });
-
-  // Capture-phase handler — runs before any ComfyUI listener can move focus
-  // off the editor. Manually invoke indentMore / indentLess instead of relying
-  // on CodeMirror's keymap, which can lose the race against outer listeners.
-  container.addEventListener(
-    "keydown",
-    (e) => {
-      if (e.key !== "Tab") return;
-      e.preventDefault();
-      e.stopPropagation();
-      (e.shiftKey ? indentLess : indentMore)(editor);
-    },
-    true,
-  );
-
-  // Clicks inside the editor should place the text caret — not start a node
-  // drag. Let CodeMirror handle the event, then stop it bubbling out to
-  // ComfyUI's canvas.
-  for (const evt of ["pointerdown", "mousedown", "dblclick"]) {
-    container.addEventListener(evt, (e) => e.stopPropagation());
-  }
-
-  widget._cmEditor = editor;
+  await mountCodeMirror(widget, container, initialValue);
 }
 
 // Kick off the CDN fetch early so the editor is ready by the time a node is created.
@@ -432,6 +451,45 @@ app.registerExtension({
 
   getCustomWidgets(app) {
     return {
+      P5JS_SCRIPT(node, inputName, inputData) {
+        const initialValue = getInputDefault(inputData, DEFAULT_SKETCH);
+        const container = $el("div", {
+          style: {
+            width: "100%",
+            height: "100%",
+            minHeight: "220px",
+            overflow: "hidden",
+            boxSizing: "border-box",
+            borderRadius: "4px",
+            cursor: "text",
+          },
+        });
+
+        const widget = node.addDOMWidget(
+          inputName,
+          "P5JS_SCRIPT",
+          container,
+          {
+            hideOnZoom: false,
+            getMinHeight: () => 240,
+          },
+        );
+        widget.value = initialValue;
+        widget._p5jsCustomScript = true;
+        widget.serializeValue = () => widget.value;
+
+        (async () => {
+          for (let i = 0; i < 5; i++) {
+            await new Promise((r) => requestAnimationFrame(r));
+          }
+          await mountCodeMirror(widget, container, widget.value ?? initialValue);
+        })().catch((e) => {
+          console.error("Failed to mount CodeMirror editor:", e);
+        });
+
+        return widget;
+      },
+
       P5JS(node, inputName) {
         const d = new Date();
         const base_filename =
@@ -469,7 +527,7 @@ app.registerExtension({
           "run_p5js_sketch",
           () => {
             clearConsolePane(consolePane);
-            loadSketch(iframe, sketchfile, node.widgets[0].value)
+            loadSketch(iframe, sketchfile, getScriptValue(node))
               .then(() => captureCanvasFromIframe(iframe))
               .catch((e) => {
                 const err = `Error running p5.js sketch: ${e.message || e}`;
@@ -509,9 +567,10 @@ app.registerExtension({
   nodeCreated(node) {
     if (node.constructor.comfyClass !== "HYPE_P5JSImage") return;
 
-    //upgrade the script textarea to a CodeMirror editor
+    // Older saved workflows may still have a native STRING widget for script.
+    // New nodes use the custom P5JS_SCRIPT widget above.
     const scriptWidget = node.widgets.find((w) => w.name === "script");
-    if (scriptWidget) {
+    if (scriptWidget && !scriptWidget._p5jsCustomScript && !scriptWidget._cmEditor) {
       attachCodeMirror(scriptWidget).catch((e) => {
         console.error("Failed to mount CodeMirror editor:", e);
       });
@@ -537,12 +596,11 @@ app.registerExtension({
       // If the sketch has never been run (no canvas yet), run it now so the
       // workflow still works without the user clicking "Run Sketch" first.
       if (!blob) {
-        const scriptWidget = node.widgets.find((w) => w.name === "script");
         clearConsolePane(p5jsWidget.consolePane);
         await loadSketch(
           theFrame,
           p5jsWidget.sketchfile,
-          scriptWidget ? scriptWidget.value : node.widgets[0].value,
+          getScriptValue(node),
         );
         blob = await captureCanvasFromIframe(theFrame);
       }

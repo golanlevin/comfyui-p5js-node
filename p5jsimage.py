@@ -23,10 +23,9 @@ class HYPE_P5JSImage(nodes.LoadImage):
     def INPUT_TYPES(s):
         return {
             "required": {
-                "script": ("STRING", 
+                "script": ("P5JS_SCRIPT", 
                            {
                                "default": "function setup() {\n  createCanvas(512, 512);\n}\n\nfunction draw() {\n  background(220);\n}", 
-                               "multiline": True, 
                                "dynamicPrompts": False
                             }),
                 "image": ("P5JS", { 
