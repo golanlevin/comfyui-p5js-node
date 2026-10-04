@@ -8,6 +8,8 @@ These notes are written for classroom use: students can run ComfyUI in the cloud
 
 The node runs a p5.js sketch in an iframe inside ComfyUI. When the workflow is queued, the node captures the p5 canvas as a temporary PNG and passes that image to the rest of the ComfyUI graph.
 
+Sketch messages from `print()`, `console.log()`, `console.warn()`, and `console.error()` appear in the node's p5 console pane.
+
 This version loads core p5.js 2.3.4:
 
 ```html
@@ -72,7 +74,7 @@ git clone https://github.com/golanlevin/comfyui-p5js-node.git
 ```
 
 4. Click **Restart Comfy**.
-5. Refresh the browser page.
+5. Hard-refresh (force reload) the browser page.
 6. In the Assets browser, confirm that `Home > ComfyUI > custom_nodes > comfyui-p5js-node` exists.
 7. In the ComfyUI graph, right-click and add the `p5js image` node.
 
@@ -85,12 +87,7 @@ cd comfyui-p5js-node
 git checkout BRANCH_NAME
 ```
 
-<!--
 
-To use this feature you need BOTH: (1) 'allow_git_url_install = true' in config.ini ([default] section), AND (2) ComfyUI launched with a loopback --listen (127.0.0.1 or ::1). Both values are read once at ComfyUI startup, so changing either one needs a restart, done with the server down: stop ComfyUI, change the setting, then start it again.
-
-
--->
 
 RunComfy also supports uploading a prepared custom node folder into `ComfyUI/custom_nodes` through its file browser.
 

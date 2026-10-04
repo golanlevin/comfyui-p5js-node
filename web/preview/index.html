@@ -20,6 +20,9 @@
   <body>
     <script type="text/javascript">
       (function () {
+        var P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
+        var originalConsole = {};
+
         function showError(message, error) {
           console.error("[p5js preview]", message, error || "");
           document.body.textContent = message;
@@ -30,19 +33,133 @@
             "white-space: pre-wrap;";
         }
 
+        function formatConsoleArg(value) {
+          if (value instanceof Error) {
+            return value.stack || value.message;
+          }
+          if (typeof value === "string") {
+            return value;
+          }
+          try {
+            return JSON.stringify(value);
+          } catch (error) {
+            return String(value);
+          }
+        }
+
+        function postConsoleMessage(level, args) {
+          var values = Array.prototype.slice.call(args).map(formatConsoleArg);
+          window.parent.postMessage(
+            {
+              source: P5JS_MESSAGE_SOURCE,
+              type: "console",
+              level: level,
+              message: values.join(" "),
+              values: values,
+              timestamp: Date.now(),
+            },
+            "*",
+          );
+        }
+
+        function installConsoleBridge() {
+          ["debug", "info", "log", "warn", "error"].forEach(function (level) {
+            if (!originalConsole[level]) {
+              originalConsole[level] = console[level]?.bind(console) || function () {};
+            }
+            console[level] = function () {
+              postConsoleMessage(level, arguments);
+              originalConsole[level].apply(console, arguments);
+            };
+          });
+        }
+
+        function installPrintBridge() {
+          window.print = function () {
+            postConsoleMessage("log", arguments);
+            originalConsole.log.apply(console, arguments);
+          };
+          window.__p5jsNodePrintBridge = window.print;
+        }
+
+        function findCanvas() {
+          return document.getElementById("defaultCanvas0") ||
+            document.querySelector("canvas");
+        }
+
+        function getCanvasExportSize(canvas) {
+          var width = Math.round(canvas.clientWidth || canvas.width);
+          var height = Math.round(canvas.clientHeight || canvas.height);
+          return {
+            width: Math.max(1, width),
+            height: Math.max(1, height),
+          };
+        }
+
+        function canvasToPngBlob(canvas) {
+          var size = getCanvasExportSize(canvas);
+          var exportCanvas = canvas;
+
+          if (canvas.width !== size.width || canvas.height !== size.height) {
+            exportCanvas = document.createElement("canvas");
+            exportCanvas.width = size.width;
+            exportCanvas.height = size.height;
+            var ctx = exportCanvas.getContext("2d");
+            ctx.drawImage(canvas, 0, 0, size.width, size.height);
+          }
+
+          return new Promise(function (resolve, reject) {
+            exportCanvas.toBlob(function (blob) {
+              if (blob) {
+                resolve({
+                  blob: blob,
+                  width: size.width,
+                  height: size.height,
+                });
+              } else {
+                reject(new Error("Could not capture p5.js canvas."));
+              }
+            }, "image/png");
+          });
+        }
+
+        function waitForCanvas(timeoutMs) {
+          var start = Date.now();
+          return new Promise(function (resolve) {
+            function check() {
+              var canvas = findCanvas();
+              if (canvas && canvas.width > 0 && canvas.height > 0) {
+                resolve(canvas);
+                return;
+              }
+              if (Date.now() - start >= timeoutMs) {
+                resolve(null);
+                return;
+              }
+              setTimeout(check, 50);
+            }
+            check();
+          });
+        }
+
         function startP5Sketch() {
           if (!window.p5) {
             showError("p5.js did not load.");
             return;
           }
-          if (document.querySelector("canvas")) return;
+          if (findCanvas()) return;
 
           try {
             new window.p5();
+            installPrintBridge();
+            setTimeout(installPrintBridge, 0);
           } catch (error) {
             showError(error && error.stack ? error.stack : String(error), error);
           }
         }
+
+        installConsoleBridge();
+        installPrintBridge();
 
         window.addEventListener("error", function (event) {
           showError(event.message || "Error while running p5.js sketch.", event.error);
@@ -55,6 +172,50 @@
               : String(event.reason || "Unhandled promise rejection."),
             event.reason,
           );
+        });
+
+        window.addEventListener("message", function (event) {
+          var data = event.data || {};
+          if (
+            data.source !== P5JS_MESSAGE_SOURCE ||
+            data.type !== "captureCanvas"
+          ) {
+            return;
+          }
+
+          waitForCanvas(data.timeoutMs || 15000)
+            .then(function (canvas) {
+              if (!canvas) {
+                throw new Error("p5.js sketch did not produce a canvas.");
+              }
+              return canvasToPngBlob(canvas);
+            })
+            .then(function (capture) {
+              event.source.postMessage(
+                {
+                  source: P5JS_MESSAGE_SOURCE,
+                  type: "canvasCapture",
+                  requestId: data.requestId,
+                  ok: true,
+                  blob: capture.blob,
+                  width: capture.width,
+                  height: capture.height,
+                },
+                event.origin || "*",
+              );
+            })
+            .catch(function (error) {
+              event.source.postMessage(
+                {
+                  source: P5JS_MESSAGE_SOURCE,
+                  type: "canvasCapture",
+                  requestId: data.requestId,
+                  ok: false,
+                  error: error && error.stack ? error.stack : String(error),
+                },
+                event.origin || "*",
+              );
+            });
         });
 
         var urlParams = new URLSearchParams(window.location.search);

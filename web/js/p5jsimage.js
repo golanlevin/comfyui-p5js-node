@@ -3,6 +3,8 @@ import { api } from "/scripts/api.js";
 import { $el } from "/scripts/ui.js";
 
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
+const P5JS_MESSAGE_SOURCE = "comfyui-p5js-node";
+let canvasCaptureRequestId = 0;
 
 async function saveSketch(filename, srcCode) {
   try {
@@ -32,6 +34,194 @@ async function saveSketch(filename, srcCode) {
 
 function findP5Canvas(doc) {
   return doc?.getElementById("defaultCanvas0") || doc?.querySelector("canvas");
+}
+
+function captureCanvasFromIframe(iframe, timeoutMs = 15000) {
+  const requestId = ++canvasCaptureRequestId;
+
+  return new Promise((resolve, reject) => {
+    const frameWindow = iframe.contentWindow;
+    if (!frameWindow) {
+      reject(new Error("p5.js preview iframe is not available"));
+      return;
+    }
+
+    const request = {
+      source: P5JS_MESSAGE_SOURCE,
+      type: "captureCanvas",
+      requestId,
+      timeoutMs,
+    };
+
+    const sendRequest = () => {
+      frameWindow.postMessage(request, window.location.origin);
+    };
+
+    const retry = setInterval(sendRequest, 250);
+    const timer = setTimeout(() => {
+      clearInterval(retry);
+      window.removeEventListener("message", onMessage);
+      reject(new Error("Timed out waiting for p5.js canvas capture"));
+    }, timeoutMs + 1000);
+
+    function onMessage(event) {
+      const data = event.data || {};
+      if (
+        event.source !== frameWindow ||
+        data.source !== P5JS_MESSAGE_SOURCE ||
+        data.type !== "canvasCapture" ||
+        data.requestId !== requestId
+      ) {
+        return;
+      }
+
+      clearTimeout(timer);
+      clearInterval(retry);
+      window.removeEventListener("message", onMessage);
+
+      if (!data.ok) {
+        reject(new Error(data.error || "p5.js sketch did not produce a canvas"));
+        return;
+      }
+      if (!data.blob) {
+        reject(new Error("p5.js canvas capture returned no image data"));
+        return;
+      }
+
+      resolve(data.blob);
+    }
+
+    window.addEventListener("message", onMessage);
+    sendRequest();
+  });
+}
+
+function createConsolePane() {
+  const pane = $el("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      minHeight: "100px",
+      boxSizing: "border-box",
+      border: "1px solid #111",
+      background: "#151719",
+      color: "#d8dee9",
+      font:
+        "11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      overflow: "hidden",
+    },
+  });
+
+  const toolbar = $el("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      padding: "4px 6px",
+      borderBottom: "1px solid #272b30",
+      background: "#1d2024",
+      color: "#9ca3af",
+      flex: "0 0 auto",
+    },
+  });
+
+  const label = $el("span", {
+    textContent: "p5 console",
+    style: {
+      fontSize: "11px",
+      fontWeight: "600",
+      textTransform: "uppercase",
+      letterSpacing: "0",
+    },
+  });
+
+  const clearButton = $el("button", {
+    textContent: "Clear",
+    style: {
+      border: "1px solid #383d45",
+      borderRadius: "3px",
+      background: "#242830",
+      color: "#d8dee9",
+      font: "inherit",
+      padding: "1px 6px",
+      cursor: "pointer",
+    },
+  });
+
+  const output = $el("div", {
+    style: {
+      flex: "1 1 auto",
+      minHeight: "0",
+      overflow: "auto",
+      padding: "6px",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+    },
+  });
+
+  clearButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    clearConsolePane(pane);
+  });
+
+  for (const evt of ["pointerdown", "mousedown", "dblclick", "wheel"]) {
+    pane.addEventListener(evt, (event) => event.stopPropagation());
+  }
+
+  toolbar.append(label, clearButton);
+  pane.append(toolbar, output);
+  pane._output = output;
+  return pane;
+}
+
+function clearConsolePane(pane) {
+  if (pane?._output) {
+    pane._output.textContent = "";
+  }
+}
+
+function appendConsoleMessage(pane, level, message) {
+  if (!pane?._output) return;
+
+  const line = document.createElement("div");
+  const colors = {
+    debug: "#8b949e",
+    info: "#79c0ff",
+    log: "#d8dee9",
+    warn: "#f2cc60",
+    error: "#ff7b72",
+  };
+
+  line.style.color = colors[level] || colors.log;
+  line.textContent = `[${level || "log"}] ${message || ""}`;
+  pane._output.appendChild(line);
+
+  while (pane._output.childNodes.length > 250) {
+    pane._output.removeChild(pane._output.firstChild);
+  }
+
+  pane._output.scrollTop = pane._output.scrollHeight;
+}
+
+function attachPreviewConsole(iframe, pane) {
+  function onMessage(event) {
+    const data = event.data || {};
+    if (
+      event.source !== iframe.contentWindow ||
+      data.source !== P5JS_MESSAGE_SOURCE ||
+      data.type !== "console"
+    ) {
+      return;
+    }
+
+    appendConsoleMessage(pane, data.level, data.message);
+  }
+
+  window.addEventListener("message", onMessage);
+  return () => window.removeEventListener("message", onMessage);
 }
 
 // Poll the iframe document until p5.js has created its canvas, or time out.
@@ -75,10 +265,14 @@ function canvasToPngBlob(canvas) {
 }
 
 // Save the current script and (re)load it into the iframe so p5.js runs it.
-// Resolves with the rendered canvas once it exists.
-async function runSketch(iframe, sketchfile, srcCode) {
+async function loadSketch(iframe, sketchfile, srcCode) {
   await saveSketch(sketchfile, srcCode);
   iframe.src = p5jsPreviewSrc + "?sketch=" + sketchfile + ".js";
+}
+
+// Save the current script, reload it into the iframe, and wait for a capture.
+async function runSketch(iframe, sketchfile, srcCode) {
+  await loadSketch(iframe, sketchfile, srcCode);
   return waitForCanvas(iframe);
 }
 
@@ -263,6 +457,8 @@ app.registerExtension({
             background: "#222",
           },
         });
+        const consolePane = createConsolePane();
+        const detachConsole = attachPreviewConsole(iframe, consolePane);
 
         node.serialize_widgets = false;
 
@@ -272,15 +468,14 @@ app.registerExtension({
           "Run Sketch",
           "run_p5js_sketch",
           () => {
-            runSketch(iframe, sketchfile, node.widgets[0].value).then((canvas) => {
-              if (!canvas) {
-                alert("p5.js sketch did not produce a canvas");
-              }
-            }).catch((e) => {
-              const err = `Error running p5.js sketch: ${e.message || e}`;
-              alert(err);
-              console.error(err, e);
-            });
+            clearConsolePane(consolePane);
+            loadSketch(iframe, sketchfile, node.widgets[0].value)
+              .then(() => captureCanvasFromIframe(iframe))
+              .catch((e) => {
+                const err = `Error running p5.js sketch: ${e.message || e}`;
+                alert(err);
+                console.error(err, e);
+              });
           }
         );
         btn.serializeValue = () => undefined;
@@ -292,6 +487,19 @@ app.registerExtension({
           getMinHeight: () => 400,
         });
         widget.sketchfile = sketchfile;
+        widget.consolePane = consolePane;
+        widget.detachConsole = detachConsole;
+
+        const consoleWidget = node.addDOMWidget(
+          "p5js_console",
+          "P5JS Console",
+          consolePane,
+          {
+            hideOnZoom: false,
+            getMinHeight: () => 120,
+          },
+        );
+        consoleWidget.serializeValue = () => undefined;
 
         return widget;
       },
@@ -316,27 +524,29 @@ app.registerExtension({
     p5jsWidget.serializeValue = async () => {
       //get the canvas from iframe
       const theFrame = p5jsWidget.element;
-      const iframe_doc =
-        theFrame.contentDocument || theFrame.contentWindow.document;
-      let canvas = findP5Canvas(iframe_doc);
+      let canvas = null;
+      try {
+        const iframe_doc =
+          theFrame.contentDocument || theFrame.contentWindow.document;
+        canvas = findP5Canvas(iframe_doc);
+      } catch (e) {
+        console.debug("Direct iframe canvas lookup failed; using capture bridge.", e);
+      }
+      let blob = canvas ? await canvasToPngBlob(canvas) : null;
 
       // If the sketch has never been run (no canvas yet), run it now so the
       // workflow still works without the user clicking "Run Sketch" first.
-      if (!canvas) {
+      if (!blob) {
         const scriptWidget = node.widgets.find((w) => w.name === "script");
-        canvas = await runSketch(
+        clearConsolePane(p5jsWidget.consolePane);
+        await loadSketch(
           theFrame,
           p5jsWidget.sketchfile,
           scriptWidget ? scriptWidget.value : node.widgets[0].value,
         );
-        if (!canvas) {
-          const err = "p5.js sketch did not produce a canvas";
-          alert(err);
-          throw new Error(err);
-        }
+        blob = await captureCanvasFromIframe(theFrame);
       }
 
-      const blob = await canvasToPngBlob(canvas);
       if (!blob) {
         const err = "Could not capture p5.js canvas";
         alert(err);

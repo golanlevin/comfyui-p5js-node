@@ -42,8 +42,9 @@ Because this version uses p5.js 2.3.4, older p5 1.x sketches may need updates.
 
 1. Paste a p5.js sketch into the node's script editor.
 2. Press **Run Sketch** to save the sketch into ComfyUI's temporary `p5js` folder and reload the preview iframe.
-3. Press **Queue Prompt** to execute the workflow. If the sketch has not been run yet, the node tries to run it automatically before capturing the canvas.
-4. The captured canvas is uploaded as a temporary image and passed to ComfyUI as the node output.
+3. Use `print()`, `console.log()`, `console.warn()`, or `console.error()` in the sketch to write to the node's p5 console pane.
+4. Press **Queue Prompt** to execute the workflow. If the sketch has not been run yet, the node tries to run it automatically before capturing the canvas.
+5. The captured canvas is uploaded as a temporary image and passed to ComfyUI as the node output.
 
 ## Recommended Test
 
