@@ -331,7 +331,11 @@ function getScriptWidget(node) {
 }
 
 function getScriptValue(node) {
-  return getScriptWidget(node)?.value ?? DEFAULT_SKETCH;
+  const widget = getScriptWidget(node);
+  if (!widget) return DEFAULT_SKETCH;
+  if (widget._p5jsGetValue) return widget._p5jsGetValue();
+  if (widget._cmEditor) return widget._cmEditor.state.doc.toString();
+  return widget.value ?? DEFAULT_SKETCH;
 }
 
 async function mountCodeMirror(widget, container, initialValue) {
@@ -397,6 +401,8 @@ async function mountCodeMirror(widget, container, initialValue) {
   }
 
   widget._cmEditor = editor;
+  widget._p5jsGetValue = () => editor.state.doc.toString();
+  widget.serializeValue = widget._p5jsGetValue;
 }
 
 async function attachCodeMirror(widget) {
@@ -559,7 +565,8 @@ app.registerExtension({
         );
         widget.value = initialValue;
         widget._p5jsCustomScript = true;
-        widget.serializeValue = () => widget.value;
+        widget._p5jsGetValue = () => widget.value ?? "";
+        widget.serializeValue = () => getScriptValue(node);
 
         (async () => {
           for (let i = 0; i < 5; i++) {
@@ -604,7 +611,13 @@ app.registerExtension({
         node.serialize_widgets = false;
         node._p5jsRunSketch = () => {
           clearConsolePane(consolePane);
-          return loadSketch(iframe, sketchfile, getScriptValue(node))
+          const srcCode = getScriptValue(node);
+          appendConsoleMessage(
+            consolePane,
+            "info",
+            `Uploading p5 sketch: ${srcCode.length} chars`,
+          );
+          return loadSketch(iframe, sketchfile, srcCode)
             .then(() => captureCanvasFromIframe(iframe))
             .catch((e) => {
               const err = `Error running p5.js sketch: ${e.message || e}`;
@@ -661,11 +674,13 @@ app.registerExtension({
       // current editor contents, not a previously-rendered canvas.
       const theFrame = p5jsWidget.element;
       clearConsolePane(p5jsWidget.consolePane);
-      await loadSketch(
-        theFrame,
-        p5jsWidget.sketchfile,
-        getScriptValue(node),
+      const srcCode = getScriptValue(node);
+      appendConsoleMessage(
+        p5jsWidget.consolePane,
+        "info",
+        `Uploading p5 sketch: ${srcCode.length} chars`,
       );
+      await loadSketch(theFrame, p5jsWidget.sketchfile, srcCode);
       const blob = await captureCanvasFromIframe(theFrame);
 
       if (!blob) {
