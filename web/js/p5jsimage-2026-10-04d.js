@@ -269,12 +269,27 @@ function canvasToPngBlob(canvas) {
 // Save the current script and (re)load it into the iframe so p5.js runs it.
 async function loadSketch(iframe, sketchfile, srcCode) {
   await saveSketch(sketchfile, srcCode);
-  iframe.src =
+  const nextSrc =
     p5jsPreviewSrc +
     "?sketch=" +
     encodeURIComponent(sketchfile + ".js") +
     "&reload=" +
     Date.now();
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      iframe.removeEventListener("load", onLoad);
+      reject(new Error("Timed out loading p5.js preview iframe"));
+    }, 10000);
+
+    function onLoad() {
+      clearTimeout(timer);
+      resolve();
+    }
+
+    iframe.addEventListener("load", onLoad, { once: true });
+    iframe.src = nextSrc;
+  });
 }
 
 // Save the current script, reload it into the iframe, and wait for a capture.

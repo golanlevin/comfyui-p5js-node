@@ -128,7 +128,14 @@
           return new Promise(function (resolve) {
             function check() {
               var canvas = findCanvas();
-              if (canvas && canvas.width > 0 && canvas.height > 0) {
+              var startedAt = window.__p5jsSketchStartedAt || start;
+              var hasSettled = Date.now() - startedAt > 750;
+              if (
+                canvas &&
+                canvas.width > 0 &&
+                canvas.height > 0 &&
+                (window.__p5jsSketchReady || hasSettled)
+              ) {
                 resolve(canvas);
                 return;
               }
@@ -210,9 +217,58 @@
               "Object.keys(__p5Exports).forEach(function (name) {",
               "  p[name] = __p5Exports[name];",
               "});",
+              "if (__p5Exports.setup) {",
+              "  var __p5UserSetup = p.setup;",
+              "  p.setup = function () {",
+              "    var result = __p5UserSetup.apply(this, arguments);",
+              "    window.__p5jsSketchReady = true;",
+              "    return result;",
+              "  };",
+              "} else {",
+              "  window.__p5jsSketchReady = true;",
+              "}",
+              "if (__p5Exports.draw) {",
+              "  var __p5UserDraw = p.draw;",
+              "  p.draw = function () {",
+              "    window.__p5jsSketchReady = true;",
+              "    return __p5UserDraw.apply(this, arguments);",
+              "  };",
+              "}",
               "\n//# sourceURL=/p5js/" + sketchName,
             ].join("\n"),
           );
+        }
+
+        function markSketchStarting() {
+          window.__p5jsSketchReady = false;
+          window.__p5jsSketchStartedAt = Date.now();
+        }
+
+        function wrapInstanceFactory(factory) {
+          return function (p) {
+            factory(p);
+
+            if (typeof p.setup === "function") {
+              var userSetup = p.setup;
+              p.setup = function () {
+                var result = userSetup.apply(this, arguments);
+                window.__p5jsSketchReady = true;
+                return result;
+              };
+            }
+
+            if (typeof p.draw === "function") {
+              var userDraw = p.draw;
+              p.draw = function () {
+                window.__p5jsSketchReady = true;
+                return userDraw.apply(this, arguments);
+              };
+            }
+
+            if (typeof p.setup !== "function") {
+              window.__p5jsSketchReady = true;
+            }
+          };
         }
 
         function getInstanceModeSketch(source, sketchName) {
@@ -222,6 +278,7 @@
             /^new\s+p5\s*\(/.test(trimmed) ||
             /[;\n]\s*new\s+p5\s*\(/.test(trimmed)
           ) {
+            markSketchStarting();
             new Function(
               "window",
               "document",
@@ -302,10 +359,12 @@
             installPrintBridge();
             var instanceSketch = getInstanceModeSketch(source, sketchName);
             if (instanceSketch?.factory) {
-              new window.p5(instanceSketch.factory);
+              markSketchStarting();
+              new window.p5(wrapInstanceFactory(instanceSketch.factory));
             } else if (instanceSketch?.started) {
               // Direct instance-mode sketches already called new p5(...).
             } else {
+              markSketchStarting();
               new window.p5(function (p) {
                 createSketchFactory(source, sketchName)(
                   p,
