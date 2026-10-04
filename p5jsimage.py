@@ -35,8 +35,9 @@ class HYPE_P5JSImage(nodes.LoadImage):
             },
         }
 
-    def IS_CHANGED(id):
-        return True
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return time.time()
 
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
@@ -48,7 +49,7 @@ class HYPE_P5JSImage(nodes.LoadImage):
     CATEGORY = "p5js"
 
     def run(s, script, image, **kwargs):
-        return super().load_image(folder_paths.get_annotated_filepath(image))
+        return super().load_image(image)
 
 # Message Handling
 class MessageHolder:

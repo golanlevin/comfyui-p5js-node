@@ -66,6 +66,11 @@ The most direct installation path is RunComfy's terminal.
 ```sh
 cd custom_nodes
 ```
+<!-- 
+
+rm -rf comfyui-p5js-node
+
+-->
 
 3. Clone this repository:
 
