@@ -34,8 +34,9 @@ import { $el } from "/scripts/ui.js";
  * - p5.js can create a default 100x100 canvas before the user sketch runs.
  *   The iframe removes pre-existing canvases and waits for setup()/draw()
  *   readiness before capture, preventing accidental black default images.
- * - Date-suffixed filenames are used only when a RunComfy cache-bust is
- *   required. The intended stable extension filename is web/js/p5jsimage.js.
+ * - Date-suffixed filenames were used only when a RunComfy cache-bust was
+ *   required during debugging. The stable extension filename is
+ *   web/js/p5jsimage.js.
  */
 
 const p5jsPreviewSrc = new URL(`../preview/index.html`, import.meta.url);
@@ -354,6 +355,17 @@ function getPaneHeights(node) {
 }
 
 /**
+ * Read one pane height, clamped to its minimum.
+ *
+ * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
+ * @param {"script" | "preview" | "console"} pane Pane name.
+ * @returns {number} Current pane height.
+ */
+function getPaneHeight(node, pane) {
+  return Math.max(PANE_MIN_HEIGHTS[pane], getPaneHeights(node)[pane]);
+}
+
+/**
  * Restore saved pane heights from node properties into the live widget state.
  *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
@@ -435,11 +447,19 @@ function getSerializedScript(node) {
 /**
  * Ask ComfyUI to recompute DOM widget layout after pane height changes.
  *
+ * The pane DOM widgets report min/max/preferred heights from getPaneHeight().
+ * Calling computeSize()/setSize() makes imported workflows snap back to those
+ * saved splitter positions instead of stretching rows from the imported node
+ * size.
+ *
  * @param {import("/scripts/app.js").LGraphNode} node ComfyUI graph node.
  */
 function refreshNodeLayout(node) {
   if (node.setSize && node.size) {
-    node.setSize([node.size[0], node.size[1]]);
+    const computedSize = node.computeSize?.();
+    const width = Math.max(node.size[0], computedSize?.[0] || 0);
+    const height = computedSize?.[1] || node.size[1];
+    node.setSize([width, height]);
   }
   app.graph?.setDirtyCanvas?.(true, true);
 }
@@ -1150,7 +1170,9 @@ app.registerExtension({
           container,
           {
             hideOnZoom: false,
-            getMinHeight: () => getPaneHeights(node).script,
+            getMinHeight: () => getPaneHeight(node, "script"),
+            getMaxHeight: () => getPaneHeight(node, "script"),
+            getHeight: () => getPaneHeight(node, "script"),
           },
         );
         widget.value = initialValue;
@@ -1243,7 +1265,9 @@ app.registerExtension({
         // which is automatically positioned/scaled by ComfyUI as the canvas pans and zooms.
         const widget = node.addDOMWidget("image", "P5JS", iframe, {
           hideOnZoom: false,
-          getMinHeight: () => getPaneHeights(node).preview,
+          getMinHeight: () => getPaneHeight(node, "preview"),
+          getMaxHeight: () => getPaneHeight(node, "preview"),
+          getHeight: () => getPaneHeight(node, "preview"),
         });
         widget.sketchfile = sketchfile;
         widget.consolePane = consolePane;
@@ -1264,7 +1288,9 @@ app.registerExtension({
           consolePane,
           {
             hideOnZoom: false,
-            getMinHeight: () => getPaneHeights(node).console,
+            getMinHeight: () => getPaneHeight(node, "console"),
+            getMaxHeight: () => getPaneHeight(node, "console"),
+            getHeight: () => getPaneHeight(node, "console"),
           },
         );
         consoleWidget.serialize = false;

@@ -149,7 +149,7 @@
         "Node name for S&R": "KSampler"
       },
       "widgets_values": [
-        142036259491021,
+        32062836258817,
         "randomize",
         20,
         8,
@@ -158,7 +158,7 @@
         0.8
       ],
       "widgets_values_named": {
-        "seed": 142036259491021,
+        "seed": 32062836258817,
         "control_after_generate": "randomize",
         "steps": 20,
         "cfg": 8,
@@ -450,12 +450,12 @@
       "id": 19,
       "type": "HYPE_P5JSImage",
       "pos": [
-        -171.11613559484923,
-        355.18241163358584
+        -169.06084802844293,
+        348.9328149964768
       ],
       "size": [
-        708.7307130443357,
-        1312.672105488634
+        707.7944153751951,
+        1325.2321961722278
       ],
       "flags": {},
       "order": 1,
@@ -475,8 +475,8 @@
         "ver": "91e272cc80aa06100809ccec1b99d1af135e0d35",
         "Node name for S&R": "HYPE_P5JSImage",
         "p5jsPaneHeights": {
-          "script": 317.8984375,
-          "preview": 362.1015625,
+          "script": 318.375,
+          "preview": 361.625,
           "console": 80
         },
         "p5jsScript": "function setup() {\n  createCanvas(512, 512);\n  noLoop(); \n}\n\nfunction draw() {\n  background('LightSlateGray');\n  fill('AntiqueWhite');\n  noStroke(); \n  ellipse(250,400,1200,350); \n  \n  for (let i=0; i<2; i++){\n    let rr = random(70,90); \n    let rg = random(30,55); \n    let rb = random(10,15); \n    let diam = random(90,160); \n    fill(rr,rg,rb); \n    let bx = width * ((i+1)/3) + random(-20,20);\n    let by = height * random(0.65, 0.85); \n    ellipse(bx,by, diam, diam*0.6); \n  }\n}\n\nfunction mousePressed(){\n  draw(); \n}"
