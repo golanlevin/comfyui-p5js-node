@@ -17,6 +17,9 @@ import { $el } from "/scripts/ui.js";
  *    quirks and keeps the parent node independent of p5.js internals.
  * 3. Provide a small p5 console pane and draggable splitters so students can
  *    see print()/console output and resize the editor, preview, and console.
+ * 4. Keep the p5 sketch source serializable in exported workflow JSON. Avoid
+ *    node-wide widget serialization suppression; mark only decorative/helper
+ *    widgets as non-serializable so the script survives export/import.
  *
  * Important history:
  * - p5.js 2.x no longer behaved like the older global-mode injection this node
@@ -496,6 +499,7 @@ function addPaneSplitterWidget(node, name, upperPane, lowerPane) {
     getMaxHeight: () => SPLITTER_HEIGHT,
     getHeight: () => SPLITTER_HEIGHT,
   });
+  widget.serialize = false;
   widget.serializeValue = () => undefined;
   return widget;
 }
@@ -1006,8 +1010,6 @@ app.registerExtension({
         const consolePane = createConsolePane();
         const detachConsole = attachPreviewConsole(iframe, consolePane);
 
-        node.serialize_widgets = false;
-
         // Run Sketch saves the current editor text, reloads the preview iframe,
         // and asks the iframe to capture the rendered canvas. It deliberately
         // does not upload the PNG to ComfyUI; that happens during serialization
@@ -1039,6 +1041,7 @@ app.registerExtension({
         widget.sketchfile = sketchfile;
         widget.consolePane = consolePane;
         widget.detachConsole = detachConsole;
+        widget.value = "";
 
         // This separator follows the preview and resizes preview/console.
         addPaneSplitterWidget(
@@ -1057,6 +1060,7 @@ app.registerExtension({
             getMinHeight: () => getPaneHeights(node).console,
           },
         );
+        consoleWidget.serialize = false;
         consoleWidget.serializeValue = () => undefined;
 
         return widget;
@@ -1075,6 +1079,12 @@ app.registerExtension({
    */
   nodeCreated(node) {
     if (node.constructor.comfyClass !== "HYPE_P5JSImage") return;
+
+    // Workflow export relies on widget serialization to save the script text.
+    // Some debugging builds set this false at the node level, which caused
+    // exported workflows to lose the p5 code. Keep node-wide serialization on
+    // and opt individual helper widgets out with widget.serialize = false.
+    node.serialize_widgets = true;
 
     // Older saved workflows may still have a native STRING widget for script.
     // New nodes use the custom P5JS_SCRIPT widget above.

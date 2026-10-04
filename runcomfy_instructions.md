@@ -1,26 +1,20 @@
-# comfyui-p5js-node on RunComfy
+# `comfyui-p5js-node` on RunComfy
 
-Instructions for using `comfyui-p5js-node` in a RunComfy.com cloud ComfyUI environment.
+> This page presents instructions for using the `comfyui-p5js-node` in a cloud-based ComfyUI environment at RunComfy.com. RunComfy allows quick access to hundreds of different ComfyUI nodes, without the hassle and cost of installing and maintaining a dedicated machine. *These instructions are current as of October 2026.*
+> 
+> These notes are written for classroom use: students can run ComfyUI in the cloud, install this custom node, paste in a p5.js sketch, and use the sketch image to condition a Stable Diffusion workflow.
 
-These notes are written for classroom use: students can run ComfyUI in the cloud, install this custom node, paste in a p5.js sketch, and use the sketch image to condition a Stable Diffusion workflow.
+
+---
 
 ## What This Node Does
 
-The node runs a p5.js sketch in an iframe inside ComfyUI. When the workflow is queued, the node captures the p5 canvas as a temporary PNG and passes that image to the rest of the ComfyUI graph.
+`comfyui-p5js-node` is a ComfyUI node that runs a p5.js sketch in an iframe inside ComfyUI, and can feed its canvas to a ComfyUI workflow. When the workflow is queued, the node captures the p5 canvas as a temporary PNG and passes that image to the rest of the ComfyUI graph. This version of `comfyui-p5js-node` **uses p5.js version 2.3.4** from `https://cdn.jsdelivr.net/npm/p5@2.3.4/lib/p5.js`. Note that this node does not load `p5.sound`; sketches that use sound APIs or audio input are not supported by default.
 
-Sketch messages from `print()`, `console.log()`, `console.warn()`, and `console.error()` appear in the node's p5 console pane.
 
-This version loads core p5.js 2.3.4:
+## p5 Sketch Requirements
 
-```html
-https://cdn.jsdelivr.net/npm/p5@2.3.4/lib/p5.js
-```
-
-It does not load `p5.sound`. Sketches that use sound APIs, `loadSound()`, audio input, or the old bundled p5 1.x sound addon are not supported by default.
-
-## Sketch Requirements
-
-Use ordinary global-mode p5.js sketches that create a canvas in `setup()`:
+It is recommended that you **use ordinary global-mode p5.js sketches** that construct a canvas in `setup()` and render designs in a `draw()` function, e.g.:
 
 ```js
 function setup() {
@@ -30,58 +24,57 @@ function setup() {
 function draw() {
   background(220);
   fill(40);
-  circle(width / 2, height / 2, 180);
+  circle(width/2, height/2, 180);
 }
 ```
 
-The node captures p5's default canvas, currently expected to have the browser id `defaultCanvas0`. It exports the image at the canvas's displayed p5 size, so a `createCanvas(512, 512)` sketch should produce a 512x512 image even on high-DPI displays.
+Notes: 
 
-For a Stable Diffusion 1.5 image-conditioning workflow, use `createCanvas(512, 512)` unless your workflow explicitly resizes the input image.
+* The `comfyui-p5js-node` exports the image at the canvas's displayed p5 size, thus a sketch that is set up with `createCanvas(512, 512)` should produce a 512x512 image, even on high-DPI displays. The node captures p5's default canvas, which is expected to have the browser ID `defaultCanvas0`. 
+* For a Stable Diffusion 1.5 image-conditioning workflow, it is recommended that you use `createCanvas(512, 512)` unless your workflow explicitly resizes the input image.
+* The node should be able to cope with instance mode sketches, but this is untested, and your mileage may vary.
+
+---
 
 ## Starting RunComfy
 
-1. Navigate to [RunComfy.com](https://www.runcomfy.com/).
-2. Create an account and sign in.
-3. Add funds if needed. A small amount is usually enough for a short classroom exercise.
-4. Choose **My Workflows**.
+1. Create an account at [RunComfy.com](https://www.runcomfy.com/) and sign in.
+3. Add funds if needed. A few dollars is usually enough for a short classroom exercise.
+4. Navigate to [My Workflows](https://www.runcomfy.com/comfyui-workflows/my-workflows).
 5. Choose a ComfyUI workflow such as **ComfyUI-NodesLoaded**, then click **Run Workflow**.
-6. Launch a suitable machine. A medium hobby machine is usually enough for basic SD 1.5 experiments.
-7. Wait for the cloud machine to finish starting.
+6. Launch a "Medium" Hobby machine ($0.99/hr), which is adequate for most classroom experiments.
+7. Wait 3-5 minutes for the cloud machine to finish starting.
 
-Before modifying the workflow, run RunComfy's default workflow once:
+Before proceeding further, run RunComfy's default "Unsaved Workflow" once:
 
 1. Hide the Assets panel if it blocks your view.
-2. Click **Queue Prompt**.
-3. Confirm that the default example generates an image.
+2. Click **Run**, and confirm that the default example generates an image.
 
-This gives students a known-good baseline before installing the custom node.
+This should take about a minute the first time. This gives students a known-good baseline before installing the custom node.
+
+![default_runcomfy](examples/screenshots/default_runcomfy.png)
+
+
+---
 
 ## Installing the Custom Node
 
-The most direct installation path is RunComfy's terminal.
+The recommended installation path is to use RunComfy's command-line terminal.
 
-1. Open the **Terminal** panel in RunComfy.
-2. Go to the ComfyUI custom nodes folder:
+1. Open the **Terminal** panel in RunComfy. There is a button for this on the right side of the RunComfy interface. 
+2. Change directory to the ComfyUI custom nodes folder:<br/>`cd custom_nodes`
+3. Clone this repository:<br />`git clone https://github.com/golanlevin/comfyui-p5js-node.git`
+4. Verify that the node is present by listing the directory's contents: `ls`. You should see it listed among the other custom nodes:<br/>![runcomfy_terminal](examples/screenshots/runcomfy_terminal.png)
+5. Click **Restart Comfy**. It will take about 30 seconds for the machine to reconnect.
+5. Hard-refresh (force reload) the browser page.
+6. In the Assets browser, confirm that `Home > ComfyUI > custom_nodes > comfyui-p5js-node` exists.
+7. In the ComfyUI graph, right-click and add the `p5js image` node.
 
-```sh
-cd custom_nodes
-```
 <!-- 
 
 rm -rf comfyui-p5js-node
 
 -->
-
-3. Clone this repository:
-
-```sh
-git clone https://github.com/golanlevin/comfyui-p5js-node.git
-```
-
-4. Click **Restart Comfy**.
-5. Hard-refresh (force reload) the browser page.
-6. In the Assets browser, confirm that `Home > ComfyUI > custom_nodes > comfyui-p5js-node` exists.
-7. In the ComfyUI graph, right-click and add the `p5js image` node.
 
 If you are testing a branch (*this is not common*):
 
