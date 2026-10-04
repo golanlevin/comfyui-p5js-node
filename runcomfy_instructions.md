@@ -1,8 +1,9 @@
 # `comfyui-p5js-node` on RunComfy
 
-> This page presents instructions for using the `comfyui-p5js-node` in a cloud-based ComfyUI environment at RunComfy.com. RunComfy allows quick access to hundreds of different ComfyUI nodes, without the hassle and cost of installing and maintaining a dedicated machine. *These instructions are current as of October 4, 2026.*
-> 
-> These notes are written for classroom use: students can run ComfyUI in the cloud, install this custom node, paste in a p5.js sketch, and use the sketch image to condition a Stable Diffusion workflow.
+
+> This is a custom ComfyUI node for running a p5.js sketch and passing its canvas pixels into a ComfyUI image workflow. This project was conceived in 2024 by [Benjamin Fox](https://github.com/tracerstar) (@tracerstar) and [initially published here](https://github.com/tracerstar/comfyui-p5js-node/). My repo includes [improvements](https://github.com/dominikus/comfyui-p5js-node) made by [Dominikus Baur](https://github.com/dominikus) (@ dominikus), as well as  significant changes for late 2026, including updates to target **ComfyUI 0.36.0** and **p5.js v.2.3.4**. 
+>
+> This page presents instructions for using the `comfyui-p5js-node` in a cloud-based ComfyUI environment at RunComfy.com. RunComfy allows quick access to hundreds of different ComfyUI nodes, without the hassle and cost of installing and maintaining a dedicated machine. These notes are written for classroom use: students can run ComfyUI in the cloud, install this custom node, paste in a p5.js sketch, and use the sketch image to condition a Stable Diffusion workflow.
 
 
 ---
