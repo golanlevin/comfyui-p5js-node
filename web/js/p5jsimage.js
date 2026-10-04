@@ -45,6 +45,30 @@ async function waitForCanvas(iframe, timeoutMs = 15000) {
   return null;
 }
 
+function getCanvasExportSize(canvas) {
+  const width = Math.round(canvas.clientWidth || canvas.width);
+  const height = Math.round(canvas.clientHeight || canvas.height);
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  };
+}
+
+function canvasToPngBlob(canvas) {
+  const { width, height } = getCanvasExportSize(canvas);
+  let exportCanvas = canvas;
+
+  if (canvas.width !== width || canvas.height !== height) {
+    exportCanvas = document.createElement("canvas");
+    exportCanvas.width = width;
+    exportCanvas.height = height;
+    const ctx = exportCanvas.getContext("2d");
+    ctx.drawImage(canvas, 0, 0, width, height);
+  }
+
+  return new Promise((r) => exportCanvas.toBlob(r, "image/png"));
+}
+
 // Save the current script and (re)load it into the iframe so p5.js runs it.
 // Resolves with the rendered canvas once it exists.
 async function runSketch(iframe, sketchfile, srcCode) {
@@ -299,7 +323,13 @@ app.registerExtension({
         }
       }
 
-      const blob = await new Promise((r) => canvas.toBlob(r));
+      const blob = await canvasToPngBlob(canvas);
+      if (!blob) {
+        const err = "Could not capture p5.js canvas";
+        alert(err);
+        throw new Error(err);
+      }
+
       const name = `${+new Date()}.png`;
       const file = new File([blob], name);
       const body = new FormData();

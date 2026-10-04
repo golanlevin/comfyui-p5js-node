@@ -1,38 +1,128 @@
 # comfyui-p5js-node
-Custom node for ComfyUI to run p5js
 
-## What this is
+Custom ComfyUI node for running a p5.js sketch and passing its canvas pixels into a ComfyUI image workflow.
 
-A simple proof of concept node to pass a p5js canvas through ComfyUI for img2img generation use.
+This fork is intended for classroom use with RunComfy.com. It currently loads core p5.js 2.3.4 only:
 
-## What this isn't
-
-A full blown p5js editor. That already exists. There's no debugging or error checking here. This node expects a working sketch to be pasted in the input to render to a canvas.
-
-## How it works
-
-* Paste your sketch in the text box and press the "*Run Sketch*" button.
-* The sketch is saved to the temp folder in a subdirectory, named `p5js/sketch.js`
-* The iframe gets refreshed with this sketch.
-* Pressing "*Queue Prompt*" will trigger the node to pass control to the JS to query for the canvas obect in the iframe and then return it back for * processing to an image. The image then gets passed along the pipeline.
-
-## Installation and tips
-
-Clone the repository into your ComfyUI custom_nodes directory. You can clone the repository with the command:
-
-```
-git clone https://github.com/tracerstar/comfyui-p5js-node.git
+```html
+https://cdn.jsdelivr.net/npm/p5@2.3.4/lib/p5.js
 ```
 
-When writing your p5js sketch, make sure you use the basic method of creating a canvas in your setup method. Right now the JS will only grab the canvas object by the default ID p5js adds (`defaultCanvas0`). This can be improved later on.
+* *Note that this node does not load `p5.sound`. Sketches that use sound APIs are not supported in this teaching build.*
 
-```
+## What This Is
+
+The node lets you paste a p5.js sketch into ComfyUI, render the sketch in an iframe, capture the default p5 canvas, and feed that image into the rest of a ComfyUI graph. For example, the p5 image can become the starting image for an img2img workflow or a visual guide for a diffusion model.
+
+## What This Is Not
+
+This is not a full p5.js development environment. It does not provide p5 reference docs, sketch debugging, asset management, sound support, or a browser console inside the node. Test sketches separately if they are complicated, then paste working code into the node.
+
+## Sketch Requirements
+
+Use ordinary global-mode p5.js sketches that create a canvas in `setup()`:
+
+```js
 function setup() {
-    createCanvas(512,512);
+  createCanvas(512, 512);
+}
+
+function draw() {
+  background(220);
+  fill(40);
+  circle(width / 2, height / 2, 180);
 }
 ```
 
-## What's next
+The node captures p5's default canvas, currently expected to have the browser id `defaultCanvas0`. It exports the image at the canvas's displayed p5 size, so a `createCanvas(512, 512)` sketch should produce a 512x512 image even on high-DPI displays.
 
-* Some UI improvements (maybe allowing sketches to save and later be picked from a dropdown like the loadImage node)
-* Looking into the feasibility of animation / batch iamges
+Because this fork uses p5.js 2.3.4, older p5 1.x sketches may need updates. In particular, do not rely on the old bundled `p5.sound` addon. For classroom use, keep sketches visual-only unless the node is explicitly extended later.
+
+## How It Works
+
+1. Paste a p5.js sketch into the node's script editor.
+2. Press **Run Sketch** to save the sketch into ComfyUI's temporary `p5js` folder and reload the preview iframe.
+3. Press **Queue Prompt** to execute the workflow. If the sketch has not been run yet, the node tries to run it automatically before capturing the canvas.
+4. The captured canvas is uploaded as a temporary image and passed to ComfyUI as the node output.
+
+## RunComfy Installation
+
+The intended classroom path is to install this fork in a RunComfy machine rather than asking students to run ComfyUI locally.
+
+In RunComfy:
+
+1. Launch a ComfyUI machine.
+2. Open the RunComfy terminal.
+3. Go to the ComfyUI custom nodes folder:
+
+```sh
+cd ComfyUI/custom_nodes
+```
+
+4. Clone this fork:
+
+```sh
+git clone https://github.com/golanlevin/comfyui-p5js-node.git
+```
+
+5. Restart or refresh ComfyUI.
+6. In the ComfyUI graph, right-click and add the `p5js image` node.
+
+If you are testing a branch:
+
+```sh
+cd ComfyUI/custom_nodes
+git clone https://github.com/golanlevin/comfyui-p5js-node.git
+cd comfyui-p5js-node
+git checkout BRANCH_NAME
+```
+
+RunComfy also supports uploading a prepared custom node folder into `ComfyUI/custom_nodes` through its file browser.
+
+## Recommended Smoke Test
+
+After installing, test the node with this sketch:
+
+```js
+function setup() {
+  createCanvas(512, 512);
+}
+
+function draw() {
+  background("AntiqueWhite");
+  noStroke();
+
+  fill("LightSlateGray");
+  rect(0, 0, width, 220);
+
+  fill(70, 40, 10);
+  ellipse(220, 430, 200, 80);
+  fill(90, 60, 15);
+  ellipse(370, 340, 120, 60);
+}
+```
+
+Check that:
+
+1. **Run Sketch** shows the p5 canvas in the iframe.
+2. Panning and zooming the ComfyUI canvas keeps the iframe aligned with the node.
+3. Clicking and typing in the code editor does not drag the node.
+4. **Queue Prompt** captures the p5 canvas and passes it to the next image node.
+5. A workflow with two p5 nodes captures two separate sketches correctly.
+
+## Local Installation
+
+For local ComfyUI use, clone this repository into `ComfyUI/custom_nodes`:
+
+```sh
+cd ComfyUI/custom_nodes
+git clone https://github.com/golanlevin/comfyui-p5js-node.git
+```
+
+Then restart ComfyUI.
+
+## Notes for Maintainers
+
+The preview iframe lives in `web/preview/index.html`. The ComfyUI frontend extension lives in `web/js/p5jsimage.js`. The Python node wrapper lives in `p5jsimage.py`.
+
+The iframe uses ComfyUI's `addDOMWidget` API so the preview remains attached to the node while panning and zooming. The script editor is upgraded to CodeMirror and stops pointer events from bubbling into ComfyUI's canvas so editing code does not start a node drag.
